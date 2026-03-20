@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# 测试
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 测试输出（可重新生成）
+tests/output/
+
+# 环境
+.venv/
+venv/
+.env
