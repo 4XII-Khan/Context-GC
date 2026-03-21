@@ -371,6 +371,4 @@ context-gc/
 
 - [Claude Code](docs/comparisons/claude-code.md) · [OpenClaw](docs/comparisons/openclaw.md) · [Cursor](docs/comparisons/cursor.md) · [AgentScope](docs/comparisons/agentscope.md) · [LangGraph](docs/comparisons/langgraph.md) · [OpenViking](docs/comparisons/openviking.md) · [Sirchmunk](docs/comparisons/sirchmunk.md) · [MemGPT](docs/comparisons/memgpt.md)
 
-**References**
 
-- [OpenViking Replica (No Embedding)](docs/references/openviking-replica-no-embedding.md) — OpenViking 复刻指南（L0 改用非向量检索）
