@@ -38,13 +38,19 @@
 
 ## 🌰 Why Context GC?
 
+**Context GC** treats context as a *recyclable resource*: retain by relevance, metabolize by age, distill by value. Memory that compounds—not just longer, but **deeper**.
+
 LLM context windows are finite, but conversations grow without bound. Existing solutions either **truncate blindly** (losing critical context), **summarize everything equally** (wasting tokens on irrelevant history), or **require external vector databases** (adding infrastructure complexity). Context GC takes a fundamentally different approach: treat context management as a **garbage collection problem** — keep what matters, compress what's aging, and recycle knowledge into long-term memory.
 
 ---
 
 ## ✨ Core Capabilities
 
+**Selective memory is what approaches understanding.** Unselective memory is storage; selective memory approximates comprehension. Context GC asks: what kind of memory makes an agent seem to *understand*, not just recite? The answer: memory that distinguishes important from secondary, metabolizes and sediments over time, and carries over into new sessions. Not for length—for structure and continuity.
+
 ### 1. In-Session Compression
+
+**From truncation to metabolism.** Human memory is metabolic: the important stays, the trivial is compressed or forgotten—but forgetting isn't loss, it shapes intuition. LLMs had only two modes: remember everything, or cut it off. Context GC adds a third: *metabolize*. Low-relevance rounds are merged into refined summaries, not discarded; the compressed is form, what continues is cognition. Relevance is dynamic—conversation flows (A → B → back to A); uniform treatment ignores that flow. Generational scoring preserves "what matters now" and settles "what matters long-term." *Forgetting is choice, not loss.*
 
 Sustain long conversations within a fixed context window via **generational garbage collection** — semantically score rounds by relevance, retain high-value context, merge low-value history.
 
@@ -58,6 +64,8 @@ Sustain long conversations within a fixed context window via **generational garb
 
 ### 2. Session-Level Memory Persistence
 
+**From consumption to cultivation.** Raw context is one-time fuel: use it, it's gone. Context GC turns it into cultivable soil: **compress** the current into reusable structure, **persist** into L0/L1/L2 for retrieval and retrospection, **distill** preferences/experiences/skills from sessions, **inject** so new sessions start with that sediment. Each conversation feeds the next; knowledge compounds. Nothing is thrown away—it's layered for reuse.
+
 Persist conversation state at session end into a **three-tier retrieval hierarchy**; enable cross-session search without vector DB.
 
 | Capability | Description |
@@ -68,6 +76,8 @@ Persist conversation state at session end into a **three-tier retrieval hierarch
 | **Cross-Session Keyword Search** | FTS5 / BM25 full-text search over L0/L1; no embeddings, no vector DB; filter sessions by user/agent |
 
 ### 3. Memory Distillation & Long-Term Learning
+
+**From sessions to relationship.** A single session is a point; a relationship is a line. If every conversation starts from zero, there's no sense of relation. Context GC aims for the agent to maintain cognition of the user across sessions—preferences, habits, success and failure patterns. The user no longer repeats "I prefer concise" or "don't use var"; the agent gradually *knows* them. This isn't optimizing a function—it's designing a sustainable human–agent relationship.
 
 Extract **user preferences**, **experiences**, and **personalized skills** from completed sessions via a configurable distillation pipeline.
 
@@ -82,6 +92,8 @@ Extract **user preferences**, **experiences**, and **personalized skills** from 
 | **Cost Budget** | Token budget for distillation pipeline; low-priority tasks auto-skipped when exceeded |
 
 ### 4. Architecture
+
+**The philosophy of zero infrastructure: embed, don't replace.** No vector DB, no new services, zero core dependencies—Context GC is *embedded*. It doesn't replace the existing architecture; it integrates into the host, offering optional memory and compression for any agent. Good capability should be embeddable, not force the host to rebuild the world.
 
 | Property | Description |
 | -------- | ----------- |
