@@ -18,12 +18,9 @@ import asyncio
 import json
 import os
 import random
-import sys
 import time
 from datetime import datetime
 from pathlib import Path
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
