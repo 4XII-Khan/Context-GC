@@ -303,19 +303,40 @@ Output: `tests/output/YYYY-MM-DD/test_100_rounds_log.txt`, `test_100_rounds_fina
 
 ## 📋 Implementation Status
 
+### 1. In-Session Compression
+
 | Module | Status | Details |
 | ------ | ------ | ------- |
-| In-session compression | ✅ Done | `core.py` + `compaction.py` + `generational.py` + `state.py` |
-| 100-round integration test | ✅ Done | 101 rounds, 73% compression ratio |
+| Incremental summarization + generational scoring | ✅ Done | `core.py` + `generational.py` + `state.py` |
+| Capacity-triggered merging | ✅ Done | `compaction.py`, gradient-based compression ratio |
+
+### 2. Session-Level Memory Persistence
+
+| Module | Status | Details |
+| ------ | ------ | ------- |
 | MemoryBackend + FileBackend | ✅ Done | `storage/backend.py` + `storage/file_backend.py` |
-| Checkpoint crash recovery | ✅ Done | `storage/checkpoint.py` |
-| Preference detection | ✅ Done | `memory/preference.py`, zero LLM cost |
-| Preference deduplication | ✅ Done | `file_backend.save_user_preferences`, exact / keyword_overlap |
-| Distillation pipeline | ✅ Done | `distillation/` sub-package |
-| Memory lifecycle | ✅ Done | `memory/lifecycle.py`, TTL + capacity control |
+| L0/L1/L2 layered storage | ✅ Done | Written at `on_session_end()` |
+| Checkpoint crash recovery | ✅ Done | `storage/checkpoint.py`, incremental every N rounds |
+| In-session preference detection | ✅ Done | `memory/preference.py`, zero LLM cost |
+| Cross-session keyword search | ✅ Done | FTS5/BM25, no vector DB |
 | Session expiry cleanup | ✅ Done | `storage/cleanup.py` |
+
+### 3. Memory Distillation & Long-Term Learning
+
+| Module | Status | Details |
+| ------ | ------ | ------- |
+| Distillation pipeline | ✅ Done | `distillation/`: Task Agent → Distiller → experience/skills |
+| Preference deduplication | ✅ Done | `save_user_preferences`, exact / keyword_overlap |
+| Experience deduplication | ✅ Done | `experience_writer.py`, keyword_overlap |
+| Memory lifecycle | ✅ Done | `memory/lifecycle.py`, TTL aging + injection capacity control |
+
+### 4. Testing
+
+| Module | Status | Details |
+| ------ | ------ | ------- |
 | Unit tests | ✅ Done | 28 cases |
 | E2E integration tests | ✅ Done | 7 cases, 52/53 passed |
+| 100-round integration test | ✅ Done | 101 rounds, 73% compression ratio |
 
 ---
 

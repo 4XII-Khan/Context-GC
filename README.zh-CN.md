@@ -296,19 +296,40 @@ python3 -m pytest tests/test_100_rounds.py -v -s
 
 ## 实现进度
 
+### 1. 会话内压缩
+
 | 模块 | 状态 | 说明 |
 |------|------|------|
-| 会话内压缩（摘要/分代/合并） | **已实现** | `core.py` + `compaction.py` + `generational.py` + `state.py` |
-| 100 轮集成测试 | **已实现** | 101 轮、73% 压缩比 |
-| MemoryBackend 协议 + FileBackend | **已实现** | `storage/backend.py` + `storage/file_backend.py` |
-| Checkpoint 崩溃恢复 | **已实现** | `storage/checkpoint.py` |
-| 偏好信号检测 | **已实现** | `memory/preference.py`，零 LLM 成本 |
-| 偏好去重 | **已实现** | `file_backend.save_user_preferences`，exact / keyword_overlap |
-| 蒸馏管道（Task Agent → 蒸馏 → Skill Learner） | **已实现** | `distillation/` 子包，复用 AsMe 提示词 |
-| 记忆生命周期（老化/淘汰/注入） | **已实现** | `memory/lifecycle.py`，TTL + 容量控制 |
-| 会话过期清理 | **已实现** | `storage/cleanup.py` |
-| 单元测试 | **已实现** | 28 个用例，覆盖持久化/检查点/偏好/分代/生命周期/蒸馏/偏好去重 |
-| 端到端集成测试 | **已实现** | 7 个 Case，52/53 通过 |
+| 增量摘要 + 分代打分 | ✅ 已实现 | `core.py` + `generational.py` + `state.py` |
+| 容量阈值触发合并 | ✅ 已实现 | `compaction.py`，梯度控制压缩比 |
+
+### 2. 会话级记忆持久化
+
+| 模块 | 状态 | 说明 |
+|------|------|------|
+| MemoryBackend 协议 + FileBackend | ✅ 已实现 | `storage/backend.py` + `storage/file_backend.py` |
+| L0/L1/L2 分层存储 | ✅ 已实现 | 会话结束时 `on_session_end()` 写入 |
+| Checkpoint 崩溃恢复 | ✅ 已实现 | `storage/checkpoint.py`，每 N 轮增量写入 |
+| 会话中偏好检测 | ✅ 已实现 | `memory/preference.py`，零 LLM 成本 |
+| 跨会话关键词检索 | ✅ 已实现 | FTS5/BM25，无向量 DB |
+| 会话过期清理 | ✅ 已实现 | `storage/cleanup.py` |
+
+### 3. 记忆蒸馏与长期学习
+
+| 模块 | 状态 | 说明 |
+|------|------|------|
+| 蒸馏管道 | ✅ 已实现 | `distillation/`：Task Agent → Distiller → 经验/技能 |
+| 偏好去重 | ✅ 已实现 | `save_user_preferences`，exact / keyword_overlap |
+| 经验去重 | ✅ 已实现 | `experience_writer.py`，keyword_overlap |
+| 记忆生命周期 | ✅ 已实现 | `memory/lifecycle.py`，TTL 老化 + 注入容量控制 |
+
+### 4. 测试
+
+| 模块 | 状态 | 说明 |
+|------|------|------|
+| 单元测试 | ✅ 已实现 | 28 个用例 |
+| E2E 集成测试 | ✅ 已实现 | 7 个 Case，52/53 通过 |
+| 100 轮集成测试 | ✅ 已实现 | 101 轮，73% 压缩比 |
 
 ## 项目结构
 
