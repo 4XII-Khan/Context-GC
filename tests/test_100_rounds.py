@@ -11,7 +11,8 @@ tests/test_100_rounds.py
 
 输出：
     - 控制台：进度与摘要
-    - 文件：test_100_rounds_log.txt（完整压缩/合并记录）
+    - 文件：tests/output/YYYY-MM-DD/test_100_rounds_log.txt（完整压缩/合并记录）
+    - 文件：tests/output/YYYY-MM-DD/test_100_rounds_final_context.txt（最终上下文摘要）
 """
 
 import asyncio
@@ -49,8 +50,7 @@ CHARS_PER_TOKEN = 3
 MIN_TOKENS_PER_ROUND = 500
 MAX_TOKENS_PER_ROUND = 10_000
 
-LOG_FILE = os.path.join(os.path.dirname(__file__), "output", "test_100_rounds_log.txt")
-FINAL_CONTEXT_FILE = os.path.join(os.path.dirname(__file__), "output", "test_100_rounds_final_context.txt")
+OUTPUT_BASE = Path(__file__).parent / "output"
 DIALOGUES_FILE = os.path.join(os.path.dirname(__file__), "data", "dialogues.md")
 
 _client = AsyncOpenAI(base_url=LLM_BASE_URL, api_key=LLM_API_KEY)
@@ -453,11 +453,17 @@ def run_test():
         raise ValueError(
             "未配置 CONTEXT_GC_API_KEY。请复制 .env.example 为 .env 并填入 API Key。"
         )
-    os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
-    if os.path.exists(LOG_FILE):
-        os.remove(LOG_FILE)
+    # 按日期建目录，与 e2e 测试保持一致
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    run_output_dir = OUTPUT_BASE / date_str
+    run_output_dir.mkdir(parents=True, exist_ok=True)
 
-    recorder = LogRecorder(LOG_FILE)
+    log_file = str(run_output_dir / "test_100_rounds_log.txt")
+    final_context_file = str(run_output_dir / "test_100_rounds_final_context.txt")
+    if os.path.exists(log_file):
+        os.remove(log_file)
+
+    recorder = LogRecorder(log_file)
     gc_ref = {}
     gen, merge, rel = make_logged_callbacks(recorder, gc_ref)
 
@@ -487,7 +493,8 @@ def run_test():
     print(f"\n{'='*60}")
     print(f"{n_rounds} 轮对话测试（数据来源: {'dialogues.md' if os.path.exists(DIALOGUES_FILE) else '程序生成'}）")
     print(f"原始总 token: {total_original_tokens:,}")
-    print(f"日志文件: {LOG_FILE}")
+    print(f"输出目录: {run_output_dir}")
+    print(f"日志文件: {log_file}")
     print(f"{'='*60}\n")
 
     start = time.time()
@@ -538,16 +545,16 @@ get_messages token: {final_tokens:,}
 单轮摘要次数:     {recorder.summary_count}
 合并摘要次数:     {recorder.merge_count}
 总耗时:           {total_time:.1f}s
-日志文件:         {LOG_FILE}
-最终上下文摘要:   {FINAL_CONTEXT_FILE}
+日志文件:         {log_file}
+最终上下文摘要:   {final_context_file}
 """
     print(summary)
 
-    with open(LOG_FILE, "a", encoding="utf-8") as f:
+    with open(log_file, "a", encoding="utf-8") as f:
         f.write(summary)
 
     # 写入最终上下文完整摘要到文件
-    with open(FINAL_CONTEXT_FILE, "w", encoding="utf-8") as f:
+    with open(final_context_file, "w", encoding="utf-8") as f:
         f.write("=" * 80 + "\n")
         f.write(f"{n_rounds} 轮测试 - 最终上下文完整摘要（压缩后）\n")
         f.write("=" * 80 + "\n\n")
@@ -558,7 +565,27 @@ get_messages token: {final_tokens:,}
         f.write("-" * 80 + "\n")
         f.write(f"共 {len(gc.state.rounds)} 条摘要，总 token: {gc.state.total_tokens:,}\n")
 
-    print(f"最终上下文摘要已写入: {FINAL_CONTEXT_FILE}")
+    print(f"最终上下文摘要已写入: {final_context_file}")
+
+    # 写入评估报告骨架（数据概览）到日期目录
+    evaluation_file = run_output_dir / "test_100_rounds_evaluation.md"
+    compression_ratio = (1 - gc.state.total_tokens / total_original_tokens) * 100 if total_original_tokens > 0 else 0
+    evaluation_content = f"""# 上下文摘要 vs 原文 对比评估报告
+
+## 一、数据概览
+
+| 指标 | 原文 | 压缩后 |
+|------|------|--------|
+| 轮数 | {n_rounds} 轮 | {len(gc.state.rounds)} 条摘要 |
+| 总 token | {total_original_tokens:,} | {gc.state.total_tokens:,} |
+| 压缩比 | - | 约 {compression_ratio:.0f}% |
+| 单轮摘要 | {recorder.summary_count} 次 | - |
+| 合并摘要 | - | {recorder.merge_count} 次 |
+
+生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+"""
+    evaluation_file.write_text(evaluation_content, encoding="utf-8")
+    print(f"评估报告骨架已写入: {evaluation_file}")
 
     return gc, recorder
 

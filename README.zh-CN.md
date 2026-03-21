@@ -13,7 +13,7 @@
 [![Release](https://img.shields.io/badge/release-v0.1.0-green.svg)](https://github.com/4XII-Khan/Context-GC/releases)
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-26%20passed-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-52%2F53%20e2e-brightgreen.svg)](tests/)
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-orange.svg)](#)
 
 <br>
@@ -182,9 +182,9 @@ python3 -m pytest tests/ -v
 | **3. 记忆蒸馏与长期学习** | `test_storage.py` | 偏好、经验、技能持久化 |
 | | `test_memory.py` | 生命周期：TTL 老化、记忆注入、token 上限 |
 | | `test_distillation.py` | 管道组件：TaskSchema、DistillationOutcome、TaskToolContext（任务、偏好） |
-| | `test_e2e_cases.py`（Case 5） | 新会话记忆注入 |
+| | `test_e2e_cases.py`（Case 5、6、7） | 全链路 + 蒸馏管道 + 经验/技能跨会话 |
 
-### 端到端集成测试（5 Case）
+### 端到端集成测试（7 Case）
 
 覆盖全部核心能力的端到端测试。需在 `.env` 中配置 LLM API Key：
 
@@ -193,17 +193,19 @@ cp .env.example .env   # 填入 CONTEXT_GC_API_KEY
 python3 tests/test_e2e_cases.py
 ```
 
-| Case | 核心能力 | 说明 | 结果 |
-| ---- | -------- | ---- | ---- |
-| 1 | 会话内压缩 | 5 轮：摘要 + 分代打分 + get_messages | 5/5 ✓ |
-| 2 | 会话内压缩 | 10 轮、小容量：容量触发合并 | 4/4 ✓ |
-| 3 | 会话级持久化 | 5 轮含偏好表达：检测 → 持久化 → 加载 | 4/4 ✓ |
-| 4 | 会话级持久化 | 8 轮，第 5 轮后模拟崩溃：Checkpoint 恢复 | 4/5 ✓ |
-| 5 | 全链路 | 8 轮：会话 → L0/L1/L2 持久化 → 新会话加载 → 跨会话检索 → 记忆注入 | 17/17 ✓ |
+| Case | 核心能力 | 说明 | 结果 | 耗时 |
+| ---- | -------- | ---- | ---- | ---- |
+| 1 | 会话内压缩 | 5 轮：摘要 + 分代打分 + get_messages | 5/5 ✓ | ~3s |
+| 2 | 会话内压缩 | 10 轮、小容量：容量触发合并 | 4/4 ✓ | ~9s |
+| 3 | 会话级持久化 | 5 轮含偏好表达：检测 → 持久化 → 加载 | 4/4 ✓ | ~1.4s |
+| 4 | 会话级持久化 | 8 轮，第 5 轮后模拟崩溃：Checkpoint 恢复 | 4/5 ✓ | ~5s |
+| 5 | 全链路 | 8 轮：会话 → L0/L1/L2 持久化 → 新会话加载 → 跨会话检索 → 记忆注入 | 17/17 ✓ | ~6s |
+| 6 | **蒸馏管道** | 10 轮：Task Agent → 蒸馏分析 → 经验写入 → 技能学习 | 9/9 ✓ | ~19s |
+| 7 | **经验/技能跨会话** | 新会话加载经验+技能 → 记忆注入 → 生命周期 TTL（无 LLM 调用） | 9/9 ✓ | ~2ms |
 
-**总结**：34/35 检查通过 · 总耗时约 25s
+**总结**：52/53 检查通过 · 总耗时约 45s
 
-报告输出：`tests/output/e2e_test_report.txt`
+报告输出：`tests/output/YYYY-MM-DD/e2e_test_report.txt`（按日期建目录）
 
 ### 100 轮集成测试
 
@@ -235,9 +237,11 @@ python3 -m pytest tests/test_100_rounds.py -v -s
 
 ### 输出文件
 
-- `tests/output/test_100_rounds_log.txt`：单轮摘要与合并摘要的完整记录
-- `tests/output/test_100_rounds_final_context.txt`：最终上下文完整摘要（压缩后）
-- `tests/output/test_100_rounds_evaluation.md`：完整对比评估报告
+- `tests/output/YYYY-MM-DD/test_100_rounds_log.txt`：单轮摘要与合并摘要的完整记录
+- `tests/output/YYYY-MM-DD/test_100_rounds_final_context.txt`：最终上下文完整摘要（压缩后）
+- `tests/output/YYYY-MM-DD/test_100_rounds_evaluation.md`：评估报告（含数据概览，每次运行自动生成）
+
+若根目录 `tests/output/` 下有旧输出文件，可运行 `python3 scripts/migrate_output_to_date_dirs.py` 迁移到对应日期目录。
 
 ## 实现进度
 
@@ -252,7 +256,7 @@ python3 -m pytest tests/test_100_rounds.py -v -s
 | 记忆生命周期（老化/淘汰/注入） | **已实现** | `memory/lifecycle.py`，TTL + 容量控制 |
 | 会话过期清理 | **已实现** | `storage/cleanup.py` |
 | 单元测试 | **已实现** | 26 个用例，覆盖持久化/检查点/偏好/分代/生命周期/蒸馏 |
-| 端到端集成测试 | **已实现** | 5 个 Case，34/35 通过 |
+| 端到端集成测试 | **已实现** | 7 个 Case，52/53 通过 |
 
 ## 项目结构
 

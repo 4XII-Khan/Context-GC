@@ -107,11 +107,12 @@ def call_llm_with_tools(system: str, messages: list[dict], tools: list[dict]) ->
         max_tokens=512,
     )
     msg = resp.choices[0].message
-    result: dict = {"content": msg.content or ""}
+    result: dict = {"role": "assistant", "content": msg.content or ""}
     if msg.tool_calls:
         result["tool_calls"] = [
             {
                 "id": tc.id,
+                "type": "function",
                 "function": {
                     "name": tc.function.name,
                     "arguments": tc.function.arguments,

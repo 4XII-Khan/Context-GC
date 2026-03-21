@@ -13,7 +13,7 @@
 [![Release](https://img.shields.io/badge/release-v0.1.0-green.svg)](https://github.com/4XII-Khan/Context-GC/releases)
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-26%20passed-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-52%2F53%20e2e-brightgreen.svg)](tests/)
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-orange.svg)](#)
 
 <br>
@@ -195,28 +195,30 @@ python3 -m pytest tests/ -v
 | **3. Memory Distillation & Long-Term Learning** | `test_storage.py` | Preferences, experience, skills persistence |
 | | `test_memory.py` | Lifecycle: TTL aging, memory injection, token limit |
 | | `test_distillation.py` | Pipeline: TaskSchema, DistillationOutcome, TaskToolContext (tasks, preferences) |
-| | `test_e2e_cases.py` (Case 5) | Memory injection into new session |
+| | `test_e2e_cases.py` (Case 5, 6, 7) | Full chain + distillation pipeline + experience/skill cross-session |
 
 ### E2E Integration Tests
 
-5 end-to-end cases covering all core capabilities. Requires LLM API key in `.env`:
+7 end-to-end cases covering all core capabilities. Requires LLM API key in `.env`:
 
 ```bash
 cp .env.example .env   # Fill in CONTEXT_GC_API_KEY
 python3 tests/test_e2e_cases.py
 ```
 
-| Case | Capability | Description | Result |
-| ---- | ---------- | ----------- | ------ |
-| 1 | In-Session Compression | 5 rounds: summarization + generational scoring + `get_messages` | 5/5 ✓ |
-| 2 | In-Session Compression | 10 rounds, small capacity: capacity-triggered merge | 4/4 ✓ |
-| 3 | Session-Level Persistence | 5 rounds with preference expressions: detect → persist → load | 4/4 ✓ |
-| 4 | Session-Level Persistence | 8 rounds, simulate crash at round 5: checkpoint recovery | 4/5 ✓ |
-| 5 | Full chain | 8 rounds: session → persist L0/L1/L2 → new session load → cross-session search → memory injection | 17/17 ✓ |
+| Case | Capability | Description | Result | Time |
+| ---- | ---------- | ----------- | ------ | ---- |
+| 1 | In-Session Compression | 5 rounds: summarization + generational scoring + `get_messages` | 5/5 ✓ | ~3s |
+| 2 | In-Session Compression | 10 rounds, small capacity: capacity-triggered merge | 4/4 ✓ | ~9s |
+| 3 | Session-Level Persistence | 5 rounds with preference expressions: detect → persist → load | 4/4 ✓ | ~1.4s |
+| 4 | Session-Level Persistence | 8 rounds, simulate crash at round 5: checkpoint recovery | 4/5 ✓ | ~5s |
+| 5 | Full chain | 8 rounds: session → persist L0/L1/L2 → new session load → cross-session search → memory injection | 17/17 ✓ | ~6s |
+| 6 | **Distillation Pipeline** | 10 rounds: Task Agent → distill → experience write → skill learning | 9/9 ✓ | ~19s |
+| 7 | **Experience/Skill Cross-Session** | New session loads experience + skills → memory injection → lifecycle TTL (no LLM) | 9/9 ✓ | ~2ms |
 
-**Summary:** 34/35 checks passed · ~25s total
+**Summary:** 52/53 checks passed · ~45s total
 
-Report output: `tests/output/e2e_test_report.txt`
+Report output: `tests/output/YYYY-MM-DD/e2e_test_report.txt` (date-based directory)
 
 ### 100-Round Integration Test
 
@@ -228,6 +230,10 @@ python3 -m pytest tests/test_100_rounds.py -v -s
 ```
 
 Data source: `tests/data/dialogues.md` (101-round AI education dialogue, ~13k tokens)
+
+Output: `tests/output/YYYY-MM-DD/test_100_rounds_log.txt`, `test_100_rounds_final_context.txt`, `test_100_rounds_evaluation.md`
+
+To migrate legacy outputs from `tests/output/` root to date directories, run: `python3 scripts/migrate_output_to_date_dirs.py`
 
 | Metric | Original | Compressed |
 | ------ | -------- | ---------- |
@@ -259,7 +265,7 @@ Data source: `tests/data/dialogues.md` (101-round AI education dialogue, ~13k to
 | Memory lifecycle | ✅ Done | `memory/lifecycle.py`, TTL + capacity control |
 | Session expiry cleanup | ✅ Done | `storage/cleanup.py` |
 | Unit tests | ✅ Done | 26 cases |
-| E2E integration tests | ✅ Done | 5 cases, 34/35 passed |
+| E2E integration tests | ✅ Done | 7 cases, 52/53 passed |
 
 ---
 

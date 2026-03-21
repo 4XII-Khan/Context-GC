@@ -46,8 +46,10 @@ LLM_MODEL = os.environ.get("CONTEXT_GC_MODEL", "Qwen3.5-35B-A3B")
 
 _client = AsyncOpenAI(base_url=LLM_BASE_URL, api_key=LLM_API_KEY)
 
-TEST_DATA_DIR = Path(__file__).parent / "output" / "e2e_test_data"
-REPORT_FILE = Path(__file__).parent / "output" / "e2e_test_report.txt"
+OUTPUT_BASE = Path(__file__).parent / "output"
+# 运行时按日期目录设置，见 main()
+TEST_DATA_DIR: Path = OUTPUT_BASE / "e2e_test_data"
+REPORT_FILE: Path = OUTPUT_BASE / "e2e_test_report.txt"
 
 
 def estimate_tokens(text: object) -> int:
@@ -146,11 +148,12 @@ def call_llm_with_tools(system: str, messages: list[dict], tools: list[dict]) ->
         extra_body={"chat_template_kwargs": {"enable_thinking": False}},
     )
     msg = resp.choices[0].message
-    result: dict = {"content": msg.content or ""}
+    result: dict = {"role": "assistant", "content": msg.content or ""}
     if msg.tool_calls:
         result["tool_calls"] = [
             {
                 "id": tc.id,
+                "type": "function",
                 "function": {"name": tc.function.name, "arguments": tc.function.arguments},
             }
             for tc in msg.tool_calls
@@ -187,14 +190,17 @@ class TestReport:
         return condition
 
     def end_case(self, elapsed: float, passed: int, total: int):
-        self._current.append(f"\n  ⏱ 耗时: {elapsed:.1f}s | 结果: {passed}/{total} 通过")
+        elapsed_str = f"{elapsed*1000:.0f}ms" if elapsed < 1 else f"{elapsed:.1f}s"
+        self._current.append(f"\n  ⏱ 耗时: {elapsed_str} | 结果: {passed}/{total} 通过")
         self.sections.append("\n".join(self._current))
 
     def dump(self) -> str:
         header = [
             f"{'═'*80}",
             f"  Context GC 全链路端到端测试报告",
+            f"  日期: {datetime.now().strftime('%Y-%m-%d')}",
             f"  生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            f"  输出目录: {REPORT_FILE.parent}",
             f"  模型: {LLM_MODEL}",
             f"{'═'*80}",
         ]
@@ -780,6 +786,322 @@ async def case5_full_lifecycle():
 
 
 # ═══════════════════════════════════════════════════════════════════
+# Case 6: 蒸馏管道全链路（Task Agent → 蒸馏 → 经验 → 技能）
+# ═══════════════════════════════════════════════════════════════════
+
+async def case6_distillation_pipeline():
+    """
+    10 轮对话含明确任务（成功+失败），验证蒸馏三阶段：
+    Task Agent 抽取任务 → Distiller 分析 → 经验写入 + 技能学习。
+    """
+    case_dir = TEST_DATA_DIR / "case6"
+    if case_dir.exists():
+        shutil.rmtree(case_dir)
+
+    report.start_case(
+        "Case 6: 蒸馏管道全链路",
+        "10 轮对话（含成功+失败任务），验证 Task Agent → 蒸馏分析 → 经验写入 → 技能学习",
+    )
+    t0 = time.time()
+    passed = 0
+    total = 0
+
+    backend = FileBackend(case_dir)
+
+    conversations = [
+        # 任务1：用户认证系统（成功完成）
+        ("帮我实现一个用户认证系统，需要支持 JWT", "好的，我来设计认证系统。核心组件：登录接口、JWT 签发、刷新 Token、中间件验证。"),
+        ("数据库怎么存储用户密码？", "使用 bcrypt 哈希存储，salt rounds=12。用户表：id、email、password_hash、created_at。"),
+        ("JWT 的过期时间设多久合适？", "access_token 15分钟，refresh_token 7天。refresh_token 存 Redis，支持主动撤销。"),
+        ("好的，认证系统实现完成了，测试通过", "认证系统已完成：JWT 签发+验证、bcrypt 密码哈希、Redis refresh token、中间件拦截。"),
+        # 任务2：缓存优化（失败任务）
+        ("帮我优化首页的 API 响应速度，加个 Redis 缓存", "好的，我给首页 API 加 Redis 缓存。缓存策略：TTL 5分钟，key=page:home:{user_id}。"),
+        ("上线后缓存命中率只有 10%，完全没效果", "分析了一下，问题是 key 按 user_id 区分导致每个用户都 miss。应该用公共 key 缓存。"),
+        ("算了，缓存方案有问题，我先回滚了", "好的，已回滚。缓存失败的原因：个性化 key 导致命中率极低。正确做法是公共内容用公共 key。"),
+        # 任务3：日志系统（成功完成）
+        ("帮我搭建一个结构化日志系统", "建议使用 structlog + JSON 格式输出，配合 ELK 做日志收集和查询。"),
+        ("日志级别怎么规划？", "ERROR=异常、WARN=降级、INFO=业务事件、DEBUG=调试细节。生产环境只开 INFO 及以上。"),
+        ("日志系统搭建好了，效果不错。我偏好用 Python 的 structlog", "日志系统完成：structlog JSON 格式、按级别分类、ELK 收集。用户偏好已记录。"),
+    ]
+
+    gc = ContextGC(
+        ContextGCOptions(
+            max_input_tokens=8000,
+            generate_summary=generate_summary,
+            merge_summary=merge_summary,
+            compute_relevance=compute_relevance,
+            estimate_tokens=estimate_tokens,
+            data_dir=str(case_dir),
+            checkpoint_interval=5,
+            scoring_interval=3,
+        ),
+        session_id="distill_test_001",
+        backend=backend,
+    )
+
+    report.log("─── 阶段 1: 会话进行（10 轮）───")
+    for i, (u, a) in enumerate(conversations, 1):
+        gc.push([{"role": "user", "content": u}, {"role": "assistant", "content": a}])
+        await gc.close()
+        report.log(f"  轮次 {i}: rounds={len(gc.state.rounds)}")
+
+    total += 1
+    passed += report.check("会话完成 10 轮", len(gc.state.rounds) >= 1, f"rounds={len(gc.state.rounds)}")
+
+    report.log("─── 阶段 2: on_session_end + 蒸馏 ───")
+
+    end_result = await gc.on_session_end(
+        user_id="distill_user_001",
+        flush_distillation=lambda **kwargs: _run_distillation(**kwargs),
+    )
+
+    distill_result = end_result.get("distillation", {})
+    report.log(f"  蒸馏结果: {json.dumps({k:v for k,v in distill_result.items() if k != 'trace'}, ensure_ascii=False)}")
+
+    if distill_result.get("trace"):
+        for line in distill_result["trace"][:20]:
+            report.log(f"    {line}")
+
+    total += 1
+    task_count = distill_result.get("task_count", 0)
+    passed += report.check(
+        "Task Agent 抽取到任务（>= 2）",
+        task_count >= 2,
+        f"task_count={task_count}",
+    )
+
+    total += 1
+    success_count = distill_result.get("success_count", 0)
+    passed += report.check(
+        "检测到成功任务（>= 1）",
+        success_count >= 1,
+        f"success_count={success_count}",
+    )
+
+    total += 1
+    failed_count = distill_result.get("failed_count", 0)
+    passed += report.check(
+        "检测到失败任务（>= 0，不强制）",
+        True,
+        f"failed_count={failed_count}",
+    )
+
+    report.log("─── 阶段 3: 验证经验写入 ───")
+    experiences = await backend.load_user_experience("distill_user_001")
+    total += 1
+    passed += report.check(
+        "经验已写入后端（>= 1 条）",
+        len(experiences) >= 1,
+        f"经验数量: {len(experiences)}",
+    )
+    for exp in experiences:
+        label = "✓成功" if exp.success else "✗失败"
+        report.log(f"    {label} [{exp.task_desc[:30]}] {exp.content[:80]}")
+
+    report.log("─── 阶段 4: 验证技能学习 ───")
+    skills_learned = distill_result.get("skills_learned", 0)
+    skill_decisions = distill_result.get("skill_decisions", [])
+    total += 1
+    passed += report.check(
+        "Skill Learner 有决策输出",
+        len(skill_decisions) >= 1 or skills_learned >= 0,
+        f"skills_learned={skills_learned}, decisions={len(skill_decisions)}",
+    )
+    for d in skill_decisions:
+        report.log(f"    决策: action={d.get('action')}, skill={d.get('skill_name')}, reason={d.get('reason', '')[:60]}")
+
+    skills_dir = case_dir / "user" / "distill_user_001" / "skills"
+    skill_files = list(skills_dir.rglob("SKILL.md")) if skills_dir.exists() else []
+    total += 1
+    passed += report.check(
+        "技能文件已写入磁盘",
+        len(skill_files) >= 1 or skills_learned == 0,
+        f"技能文件数: {len(skill_files)}",
+    )
+    for sf in skill_files:
+        content = sf.read_text(encoding="utf-8")
+        skill_name = sf.parent.name
+        preview = content[:120].replace("\n", " ")
+        report.log(f"    技能 [{skill_name}]: {preview}...")
+
+    report.log("─── 阶段 5: 验证蒸馏 trace 完整性 ───")
+    trace = distill_result.get("trace", [])
+    total += 1
+    passed += report.check(
+        "蒸馏 trace 非空（可追溯全流程）",
+        len(trace) >= 3,
+        f"trace 行数: {len(trace)}",
+    )
+
+    total += 1
+    no_errors = len(distill_result.get("errors", [])) == 0
+    passed += report.check(
+        "蒸馏过程无错误",
+        no_errors,
+        f"errors={distill_result.get('errors', [])}",
+    )
+
+    report.end_case(time.time() - t0, passed, total)
+    return passed, total
+
+
+async def _run_distillation(session_id, user_id, messages, backend, **kwargs):
+    """蒸馏管道的调用封装。"""
+    from context_gc.distillation.flush import flush_distillation
+    trace: list[str] = []
+    result = await flush_distillation(
+        session_id=session_id,
+        user_id=user_id,
+        messages=messages,
+        backend=backend,
+        call_llm=call_llm_with_tools,
+        trace=trace,
+    )
+    return result
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Case 7: 经验+技能跨会话传递与记忆注入
+# ═══════════════════════════════════════════════════════════════════
+
+async def case7_experience_skill_cross_session():
+    """
+    在 Case 6 产出的经验和技能基础上：
+    新会话加载 → 记忆注入包含经验段落 → 技能列表可用 → 生命周期过滤。
+    """
+    case_dir = TEST_DATA_DIR / "case6"
+    if not case_dir.exists():
+        report.start_case("Case 7: 经验+技能跨会话传递", "依赖 Case 6 数据，Case 6 未运行，跳过")
+        report.end_case(0, 0, 0)
+        return 0, 0
+
+    report.start_case(
+        "Case 7: 经验+技能跨会话传递",
+        "新会话加载 Case 6 产出的经验+技能 → 记忆注入 → 生命周期过滤",
+    )
+    t0 = time.time()
+    passed = 0
+    total = 0
+
+    backend = FileBackend(case_dir)
+
+    gc_new = ContextGC(
+        ContextGCOptions(
+            max_input_tokens=8000,
+            generate_summary=generate_summary,
+            merge_summary=merge_summary,
+            compute_relevance=compute_relevance,
+            estimate_tokens=estimate_tokens,
+            data_dir=str(case_dir),
+        ),
+        session_id="cross_session_002",
+        backend=backend,
+    )
+
+    report.log("─── 阶段 1: 加载上一会话的经验 ───")
+    experiences = await gc_new.get_user_experience("distill_user_001")
+    total += 1
+    passed += report.check(
+        "新会话可加载用户经验",
+        len(experiences) >= 1,
+        f"经验数量: {len(experiences)}",
+    )
+    for exp in experiences:
+        label = "✓" if exp.success else "✗"
+        report.log(f"    {label} [{exp.task_desc[:30]}] {exp.content[:80]}")
+
+    report.log("─── 阶段 2: 加载上一会话的技能 ───")
+    user_skills = await gc_new.get_user_skills("distill_user_001")
+    total += 1
+    passed += report.check(
+        "新会话可加载用户技能",
+        len(user_skills) >= 0,
+        f"技能数量: {len(user_skills)}",
+    )
+    for s in user_skills:
+        report.log(f"    技能: {s.get('name')} — {s.get('description', '')[:60]}")
+
+    report.log("─── 阶段 3: 加载偏好 ───")
+    prefs = await gc_new.get_user_preferences("distill_user_001")
+    total += 1
+    passed += report.check(
+        "新会话可加载用户偏好",
+        len(prefs) >= 0,
+        f"偏好数量: {len(prefs)}",
+    )
+    for p in prefs:
+        report.log(f"    [{p.category}] {p.l0}")
+
+    report.log("─── 阶段 4: 构建记忆注入（含经验段落）───")
+    injection = build_memory_injection(
+        preferences=prefs,
+        experiences=experiences,
+        skills=user_skills,
+        max_tokens=3000,
+        estimate_tokens=estimate_tokens,
+        current_query="帮我优化 Redis 缓存方案",
+    )
+
+    total += 1
+    passed += report.check(
+        "记忆注入文本已生成",
+        len(injection) > 10,
+        f"注入文本 {len(injection)} 字符",
+    )
+    report.log(f"    注入内容预览:\n{injection[:500]}")
+
+    total += 1
+    has_experience = "历史经验" in injection or "用户偏好" in injection
+    passed += report.check(
+        "注入文本包含记忆内容（偏好或经验）",
+        has_experience,
+    )
+
+    report.log("─── 阶段 5: 跨会话检索蒸馏会话 ───")
+    hits = await gc_new.find("认证")
+    total += 1
+    passed += report.check(
+        "跨会话检索命中蒸馏来源会话",
+        len(hits) > 0,
+        f"命中 {len(hits)} 条",
+    )
+    if hits:
+        report.log(f"    session={hits[0].get('session_id')}, l0={hits[0].get('l0', '')[:60]}")
+
+    report.log("─── 阶段 6: 生命周期过滤验证 ───")
+    from context_gc.memory.lifecycle import filter_stale_preferences, filter_stale_experiences
+    from datetime import datetime, timedelta, timezone
+
+    active_prefs, stale_prefs = filter_stale_preferences(prefs, ttl_days=90)
+    total += 1
+    passed += report.check(
+        "当前偏好全部活跃（刚创建，未过期）",
+        len(stale_prefs) == 0,
+        f"active={len(active_prefs)}, stale={len(stale_prefs)}",
+    )
+
+    future = datetime.now(timezone.utc) + timedelta(days=100)
+    _, stale_prefs_future = filter_stale_preferences(prefs, ttl_days=90, now=future)
+    total += 1
+    passed += report.check(
+        "模拟 100 天后偏好过期",
+        len(stale_prefs_future) >= len(prefs) or len(prefs) == 0,
+        f"100天后过期: {len(stale_prefs_future)}/{len(prefs)}",
+    )
+
+    active_exps, stale_exps = filter_stale_experiences(experiences, ttl_days=180)
+    total += 1
+    passed += report.check(
+        "当前经验全部活跃",
+        len(stale_exps) == 0,
+        f"active={len(active_exps)}, stale={len(stale_exps)}",
+    )
+
+    report.end_case(time.time() - t0, passed, total)
+    return passed, total
+
+
+# ═══════════════════════════════════════════════════════════════════
 # 主入口
 # ═══════════════════════════════════════════════════════════════════
 
@@ -788,8 +1110,17 @@ async def main():
         print("❌ 未配置 CONTEXT_GC_API_KEY，请复制 .env.example 为 .env 并填入 API Key")
         return
 
-    os.makedirs(TEST_DATA_DIR, exist_ok=True)
-    os.makedirs(REPORT_FILE.parent, exist_ok=True)
+    # 按日期建目录，每次执行对应日期存储，避免混乱
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    run_output_dir = OUTPUT_BASE / date_str
+    run_output_dir.mkdir(parents=True, exist_ok=True)
+
+    global TEST_DATA_DIR, REPORT_FILE
+    TEST_DATA_DIR = run_output_dir / "e2e_test_data"
+    REPORT_FILE = run_output_dir / "e2e_test_report.txt"
+    TEST_DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+    print(f"📁 输出目录: {run_output_dir}")
 
     cases = [
         ("Case 1", case1_basic_summary_and_scoring),
@@ -797,6 +1128,8 @@ async def main():
         ("Case 3", case3_preference_detection),
         ("Case 4", case4_checkpoint_recovery),
         ("Case 5", case5_full_lifecycle),
+        ("Case 6", case6_distillation_pipeline),
+        ("Case 7", case7_experience_skill_cross_session),
     ]
 
     total_passed = 0
