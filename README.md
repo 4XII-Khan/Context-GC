@@ -140,7 +140,7 @@ python3 -m pytest tests/test_100_rounds.py -v -s
 | MemoryBackend 协议 + 后端 | 设计完成 | SQLite / 文件后端 |
 | Checkpoint 崩溃恢复 | 设计完成 | `.checkpoint.json` + append-only |
 | 偏好信号检测 | 设计完成 | 关键词/正则，零 LLM 成本 |
-| 蒸馏管道（Task Agent → 蒸馏 → Skill Learner） | 设计完成 | 复用 Meditation |
+| 蒸馏管道（Task Agent → 蒸馏 → Skill Learner） | 设计完成 | 复用 AsMe |
 | 记忆生命周期（老化/淘汰） | 设计完成 | TTL + 容量控制 |
 | 会话过期清理 | 设计完成 | `session_ttl_days` |
 
