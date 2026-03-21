@@ -22,7 +22,7 @@
 
 <br>
 
-[Design Doc](docs/design/memory-system.md) · [Quick Start](#quick-start) · [Features](#core-capabilities) · [Benchmarks](#100-round-test--evaluation) · [Docs](#documentation)
+[Design Doc](docs/design/memory-system.md) · [Quick Start](#quick-start) · [Features](#core-capabilities) · [Sequence Diagram](#-complete-sequence-diagram) · [Benchmarks](#100-round-test--evaluation) · [Docs](#documentation)
 
 <br>
 
@@ -84,7 +84,7 @@ Extract **user preferences**, **experiences**, and **personalized skills** from 
 | Capability | Description |
 | ---------- | ----------- |
 | **Three-Stage Pipeline** | **Task Agent** → extracts tasks with success/failure labels; **Distiller** → analyzes outcomes; **Writers** → preferences, experiences, skill updates |
-| **User Preferences** | Writing style, coding habits, corrections, explicit preferences; stored per user; injected at session start |
+| **User Preferences** | Writing style, coding habits, corrections, explicit preferences; stored per user; dedup at write (`exact` / `keyword_overlap`); injected at session start |
 | **User Experience** | Task-scoped success patterns and failure anti-patterns; directory per task; used for decision optimization |
 | **Skills (Public & Private)** | Public: shared across users; Private: user-scoped; both updatable via distillation |
 | **Deduplication & Conflict** | Semantic dedup: `exact` / `keyword_overlap` / `llm_similar`; conflict strategies: `append` / `newer_wins` / `keep_both` / `llm_merge` |
@@ -174,6 +174,57 @@ See [`examples/context_gc_with_storage.py`](examples/context_gc_with_storage.py)
 
 ---
 
+## 📐 Complete Sequence Diagram
+
+End-to-end lifecycle: in-session compression, persistence, distillation, and injection.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Host
+    participant ContextGC
+    participant Compaction
+    participant Checkpoint
+    participant PrefDetector
+    participant Backend
+    participant Distillation
+
+    Note over Host,Distillation: === Per Round (push / close) ===
+    Host->>ContextGC: push(messages)
+    Host->>ContextGC: close()
+    ContextGC->>Compaction: generate_summary(round)
+    ContextGC->>ContextGC: generational scoring (gen_score)
+    alt token usage >= threshold
+        ContextGC->>Compaction: merge_summary(low-score rounds)
+    end
+    ContextGC->>Checkpoint: on_round_close(state) [every N rounds]
+    ContextGC->>PrefDetector: detect(round_messages)
+    PrefDetector-->>ContextGC: preferences (rule-based, zero LLM)
+    Note over Host,Distillation: === Session End (on_session_end) ===
+    Host->>ContextGC: on_session_end(user_id, agent_id)
+    ContextGC->>Backend: save_session(L0, L1, L2)
+    ContextGC->>Backend: save_user_preferences(detected) [with dedup]
+    ContextGC->>Distillation: flush_distillation(messages)
+    Distillation->>Distillation: Task Agent (extract tasks + preferences)
+    Distillation->>Backend: save_user_preferences(pending) [with dedup]
+    loop per success/failed task
+        Distillation->>Distillation: Distiller (LLM analysis)
+        Distillation->>Backend: write_experiences [with dedup]
+    end
+    Distillation->>Distillation: Skill Learner (update skills)
+    Distillation->>Backend: save_user_skill
+    Note over Host,Distillation: === New Session (injection) ===
+    Host->>ContextGC: get_user_preferences(user_id)
+    Host->>ContextGC: get_user_experience(user_id)
+    Host->>ContextGC: get_user_skills(user_id)
+    ContextGC->>Backend: load_user_preferences / experience / skills
+    Backend-->>ContextGC: preferences, experiences, skills
+    ContextGC-->>Host: build_memory_injection(...)
+    Host->>Host: inject into main LLM prompt
+```
+
+---
+
 ## 📊 Testing
 
 Tests are organized by core capability. Run all unit tests:
@@ -192,7 +243,7 @@ python3 -m pytest tests/ -v
 | **2. Session-Level Memory Persistence** | `test_storage.py` | L0/L1/L2 save/load, cross-session keyword search (FTS5), checkpoint write/recover/cleanup, session expiry |
 | | `test_memory.py` | In-session preference detection (PreferenceDetector, zero LLM cost) |
 | | `test_e2e_cases.py` (Case 3, 4, 5) | Preference detection + persistence; checkpoint crash recovery; full chain (L0/L1/L2, cross-session search) |
-| **3. Memory Distillation & Long-Term Learning** | `test_storage.py` | Preferences, experience, skills persistence |
+| **3. Memory Distillation & Long-Term Learning** | `test_storage.py` | Preferences (incl. dedup), experience, skills persistence |
 | | `test_memory.py` | Lifecycle: TTL aging, memory injection, token limit |
 | | `test_distillation.py` | Pipeline: TaskSchema, DistillationOutcome, TaskToolContext (tasks, preferences) |
 | | `test_e2e_cases.py` (Case 5, 6, 7) | Full chain + distillation pipeline + experience/skill cross-session |
@@ -259,10 +310,11 @@ Output: `tests/output/YYYY-MM-DD/test_100_rounds_log.txt`, `test_100_rounds_fina
 | MemoryBackend + FileBackend | ✅ Done | `storage/backend.py` + `storage/file_backend.py` |
 | Checkpoint crash recovery | ✅ Done | `storage/checkpoint.py` |
 | Preference detection | ✅ Done | `memory/preference.py`, zero LLM cost |
+| Preference deduplication | ✅ Done | `file_backend.save_user_preferences`, exact / keyword_overlap |
 | Distillation pipeline | ✅ Done | `distillation/` sub-package |
 | Memory lifecycle | ✅ Done | `memory/lifecycle.py`, TTL + capacity control |
 | Session expiry cleanup | ✅ Done | `storage/cleanup.py` |
-| Unit tests | ✅ Done | 26 cases |
+| Unit tests | ✅ Done | 28 cases |
 | E2E integration tests | ✅ Done | 7 cases, 52/53 passed |
 
 ---

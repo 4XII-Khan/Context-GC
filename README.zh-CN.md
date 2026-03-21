@@ -22,7 +22,7 @@
 
 <br>
 
-[设计文档](docs/design/memory-system.md) · [快速开始](#快速开始) · [核心能力](#核心能力) · [评测](#100-轮测试与评估) · [文档](#设计文档)
+[设计文档](docs/design/memory-system.md) · [快速开始](#快速开始) · [核心能力](#核心能力) · [时序图](#完整时序图) · [评测](#100-轮测试与评估) · [文档](#设计文档)
 
 <br>
 
@@ -80,7 +80,7 @@
 | 能力 | 说明 |
 | ---- | ---- |
 | **三阶段管道** | **Task Agent** → 抽取带成功/失败标注的任务；**Distiller** → 分析执行结果；**Writers** → 写入偏好、经验、技能更新 |
-| **用户偏好** | 写作风格、编码习惯、纠正记录、显式偏好；按用户存储；会话开始时注入 |
+| **用户偏好** | 写作风格、编码习惯、纠正记录、显式偏好；按用户存储；写入时去重（`exact` / `keyword_overlap`）；会话开始时注入 |
 | **用户经验** | 按任务划分的成功模式与失败反模式；每任务独立目录；用于决策优化 |
 | **技能（公共 / 私有）** | 公共：跨用户共享；私有：用户级；均可通过蒸馏更新 |
 | **去重与冲突处理** | 语义去重：`exact` / `keyword_overlap` / `llm_similar`；冲突策略：`append` / `newer_wins` / `keep_both` / `llm_merge` |
@@ -161,6 +161,59 @@ injection = build_memory_injection(preferences=prefs, experiences=exps, skills=s
 
 完整用例见 [`examples/context_gc_with_storage.py`](examples/context_gc_with_storage.py)。
 
+---
+
+## 完整时序图
+
+端到端生命周期：会话内压缩 → 持久化 → 蒸馏 → 注入。
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Host as 宿主
+    participant ContextGC
+    participant Compaction as 压缩
+    participant Checkpoint
+    participant PrefDetector as 偏好检测
+    participant Backend as 后端
+    participant Distillation as 蒸馏管道
+
+    Note over Host,Distillation: === 每轮（push / close） ===
+    Host->>ContextGC: push(messages)
+    Host->>ContextGC: close()
+    ContextGC->>Compaction: generate_summary(本轮)
+    ContextGC->>ContextGC: 分代打分（gen_score）
+    alt token 占用 >= 阈值
+        ContextGC->>Compaction: merge_summary(低分轮次)
+    end
+    ContextGC->>Checkpoint: on_round_close(state) [每 N 轮]
+    ContextGC->>PrefDetector: detect(round_messages)
+    PrefDetector-->>ContextGC: preferences（规则匹配，零 LLM）
+    Note over Host,Distillation: === 会话结束（on_session_end） ===
+    Host->>ContextGC: on_session_end(user_id, agent_id)
+    ContextGC->>Backend: save_session(L0, L1, L2)
+    ContextGC->>Backend: save_user_preferences(检测偏好) [含去重]
+    ContextGC->>Distillation: flush_distillation(messages)
+    Distillation->>Distillation: Task Agent（抽取任务 + 偏好）
+    Distillation->>Backend: save_user_preferences(pending) [含去重]
+    loop 每个 success/failed 任务
+        Distillation->>Distillation: Distiller（LLM 分析）
+        Distillation->>Backend: write_experiences [含去重]
+    end
+    Distillation->>Distillation: Skill Learner（更新技能）
+    Distillation->>Backend: save_user_skill
+    Note over Host,Distillation: === 新会话（注入） ===
+    Host->>ContextGC: get_user_preferences(user_id)
+    Host->>ContextGC: get_user_experience(user_id)
+    Host->>ContextGC: get_user_skills(user_id)
+    ContextGC->>Backend: load_user_preferences / experience / skills
+    Backend-->>ContextGC: 偏好、经验、技能
+    ContextGC-->>Host: build_memory_injection(...)
+    Host->>Host: 注入主 LLM prompt
+```
+
+---
+
 ## 测试
 
 按核心能力组织测试。运行全部单元测试：
@@ -179,7 +232,7 @@ python3 -m pytest tests/ -v
 | **2. 会话级记忆持久化** | `test_storage.py` | L0/L1/L2 存读、跨会话关键词检索（FTS5）、Checkpoint 写入/恢复/清理、会话过期 |
 | | `test_memory.py` | 会话中偏好检测（PreferenceDetector，零 LLM 成本） |
 | | `test_e2e_cases.py`（Case 3、4、5） | 偏好检测 + 持久化；Checkpoint 崩溃恢复；全链路（L0/L1/L2、跨会话检索） |
-| **3. 记忆蒸馏与长期学习** | `test_storage.py` | 偏好、经验、技能持久化 |
+| **3. 记忆蒸馏与长期学习** | `test_storage.py` | 偏好（含去重）、经验、技能持久化 |
 | | `test_memory.py` | 生命周期：TTL 老化、记忆注入、token 上限 |
 | | `test_distillation.py` | 管道组件：TaskSchema、DistillationOutcome、TaskToolContext（任务、偏好） |
 | | `test_e2e_cases.py`（Case 5、6、7） | 全链路 + 蒸馏管道 + 经验/技能跨会话 |
@@ -250,10 +303,11 @@ python3 -m pytest tests/test_100_rounds.py -v -s
 | MemoryBackend 协议 + FileBackend | **已实现** | `storage/backend.py` + `storage/file_backend.py` |
 | Checkpoint 崩溃恢复 | **已实现** | `storage/checkpoint.py` |
 | 偏好信号检测 | **已实现** | `memory/preference.py`，零 LLM 成本 |
+| 偏好去重 | **已实现** | `file_backend.save_user_preferences`，exact / keyword_overlap |
 | 蒸馏管道（Task Agent → 蒸馏 → Skill Learner） | **已实现** | `distillation/` 子包，复用 AsMe 提示词 |
 | 记忆生命周期（老化/淘汰/注入） | **已实现** | `memory/lifecycle.py`，TTL + 容量控制 |
 | 会话过期清理 | **已实现** | `storage/cleanup.py` |
-| 单元测试 | **已实现** | 26 个用例，覆盖持久化/检查点/偏好/分代/生命周期/蒸馏 |
+| 单元测试 | **已实现** | 28 个用例，覆盖持久化/检查点/偏好/分代/生命周期/蒸馏/偏好去重 |
 | 端到端集成测试 | **已实现** | 7 个 Case，52/53 通过 |
 
 ## 项目结构

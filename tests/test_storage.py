@@ -56,6 +56,48 @@ class TestFileBackend:
         assert loaded_filtered[0].l0 == "concise replies"
 
     @pytest.mark.asyncio
+    async def test_preference_dedup_exact(self, tmp_dir):
+        """偏好去重：exact 策略，完全相同的 l0 不重复写入。"""
+        backend = FileBackend(tmp_dir)
+        prefs = [
+            UserPreference(user_id="u1", category="explicit_prefs", l0="prefer TypeScript"),
+        ]
+        await backend.save_user_preferences("u1", prefs, "s1")
+        loaded = await backend.load_user_preferences("u1")
+        assert len(loaded) == 1
+
+        await backend.save_user_preferences(
+            "u1",
+            [UserPreference(user_id="u1", category="explicit_prefs", l0="prefer TypeScript")],
+            "s2",
+            dedup_strategy="exact",
+        )
+        loaded = await backend.load_user_preferences("u1")
+        assert len(loaded) == 1
+
+    @pytest.mark.asyncio
+    async def test_preference_dedup_keyword_overlap(self, tmp_dir):
+        """偏好去重：keyword_overlap 策略，关键词重叠的 l0 不重复写入。"""
+        backend = FileBackend(tmp_dir)
+        await backend.save_user_preferences(
+            "u1",
+            [UserPreference(user_id="u1", category="explicit_prefs", l0="prefer TypeScript")],
+            "s1",
+        )
+        loaded = await backend.load_user_preferences("u1")
+        assert len(loaded) == 1
+
+        await backend.save_user_preferences(
+            "u1",
+            [UserPreference(user_id="u1", category="explicit_prefs", l0="prefer using TypeScript")],
+            "s2",
+            dedup_strategy="keyword_overlap",
+            dedup_threshold=0.5,
+        )
+        loaded = await backend.load_user_preferences("u1")
+        assert len(loaded) == 1
+
+    @pytest.mark.asyncio
     async def test_experience(self, tmp_dir):
         backend = FileBackend(tmp_dir)
         exps = [

@@ -53,6 +53,32 @@ def _safe_slug(text: str, max_len: int = 60) -> str:
     return slug or "unnamed"
 
 
+def _normalize_l0(text: str) -> str:
+    """标准化 l0 用于精确去重。"""
+    return text.strip()
+
+
+def _keyword_overlap(text_a: str, text_b: str, threshold: float = 0.8) -> bool:
+    """关键词重叠率：Jaccard 相似度 > threshold 视为重复。"""
+    kws_a = set(re.findall(r"[\w\u4e00-\u9fff]+", text_a.lower()))
+    kws_b = set(re.findall(r"[\w\u4e00-\u9fff]+", text_b.lower()))
+    if not kws_a or not kws_b:
+        return False
+    overlap = len(kws_a & kws_b) / max(len(kws_a | kws_b), 1)
+    return overlap >= threshold
+
+
+def _pref_matches(
+    l0_a: str, l0_b: str, strategy: str, threshold: float
+) -> bool:
+    """判断两条偏好 l0 是否匹配（重复）。"""
+    if strategy == "exact":
+        return _normalize_l0(l0_a) == _normalize_l0(l0_b)
+    if strategy == "keyword_overlap":
+        return _keyword_overlap(l0_a, l0_b, threshold)
+    return False
+
+
 class FileBackend:
     """
     基于本地文件系统的 MemoryBackend 实现。
@@ -181,28 +207,68 @@ class FileBackend:
         user_id: str,
         prefs: list[UserPreference],
         session_id: str,
+        *,
+        dedup_strategy: str = "keyword_overlap",
+        dedup_threshold: float = 0.8,
     ) -> None:
+        """
+        保存用户偏好，写入前去重。
+
+        去重策略：
+        - exact: l0 完全一致则视为重复
+        - keyword_overlap: 关键词重叠率 > threshold 视为重复（中英文分词）
+        """
+        if not prefs:
+            return
+
         d = self.data_dir / "user" / user_id
         d.mkdir(parents=True, exist_ok=True)
         p = d / "preferences.md"
 
-        existing = ""
-        if p.exists():
-            existing = p.read_text(encoding="utf-8")
+        existing_prefs: list[UserPreference] = await self.load_user_preferences(
+            user_id, category=None
+        )
+        existing_l0s: list[str] = [e.l0 for e in existing_prefs]
+
+        def _is_duplicate(new_l0: str, against: list[str]) -> bool:
+            for l0 in against:
+                if dedup_strategy == "exact":
+                    if _normalize_l0(new_l0) == _normalize_l0(l0):
+                        return True
+                elif dedup_strategy == "keyword_overlap":
+                    if _keyword_overlap(new_l0, l0, dedup_threshold):
+                        return True
+            return False
+
+        to_append: list[UserPreference] = []
+        modified = False
+        for pref in prefs:
+            against = existing_l0s + [p.l0 for p in to_append]
+            if _is_duplicate(pref.l0, against):
+                for e in existing_prefs:
+                    if _pref_matches(pref.l0, e.l0, dedup_strategy, dedup_threshold):
+                        e.updated_at = pref.updated_at or datetime.now(
+                            timezone.utc
+                        ).isoformat(timespec="seconds")
+                        e.source_session = session_id or e.source_session
+                        modified = True
+                        break
+                continue
+            to_append.append(pref)
+            existing_l0s.append(pref.l0)
+
+        if not to_append and not modified:
+            return
 
         lines: list[str] = []
-        for pref in prefs:
+        for pref in existing_prefs + to_append:
             entry = f"- [{pref.category}] {pref.l0}"
             if pref.l1:
                 entry += f"：{pref.l1}"
-            entry += f" (session:{session_id}, {pref.updated_at})"
+            entry += f" (session:{pref.source_session or session_id}, {pref.updated_at})"
             lines.append(entry)
 
-        new_block = "\n".join(lines)
-        if existing:
-            combined = existing.rstrip("\n") + "\n" + new_block + "\n"
-        else:
-            combined = "# 用户偏好\n\n" + new_block + "\n"
+        combined = "# 用户偏好\n\n" + "\n".join(lines) + "\n"
         p.write_text(combined, encoding="utf-8")
 
     async def load_user_preferences(
