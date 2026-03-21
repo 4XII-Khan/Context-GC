@@ -10,7 +10,7 @@
 
 <br>
 
-[![Release](https://img.shields.io/badge/release-v0.1.0-green.svg)](https://github.com/4XII-Khan/Context-GC/releases)
+[![Release](https://img.shields.io/github/v/release/4XII-Khan/Context-GC)](https://github.com/4XII-Khan/Context-GC/releases)
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-52%2F53%20e2e-brightgreen.svg)](tests/)
