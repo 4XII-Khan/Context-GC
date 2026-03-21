@@ -233,8 +233,6 @@ Data source: `tests/data/dialogues.md` (101-round AI education dialogue, ~13k to
 
 Output: `tests/output/YYYY-MM-DD/test_100_rounds_log.txt`, `test_100_rounds_final_context.txt`, `test_100_rounds_evaluation.md`
 
-To migrate legacy outputs from `tests/output/` root to date directories, run: `python3 scripts/migrate_output_to_date_dirs.py`
-
 | Metric | Original | Compressed |
 | ------ | -------- | ---------- |
 | Rounds | 101 | 21 summaries |

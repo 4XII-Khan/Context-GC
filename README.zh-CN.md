@@ -241,8 +241,6 @@ python3 -m pytest tests/test_100_rounds.py -v -s
 - `tests/output/YYYY-MM-DD/test_100_rounds_final_context.txt`：最终上下文完整摘要（压缩后）
 - `tests/output/YYYY-MM-DD/test_100_rounds_evaluation.md`：评估报告（含数据概览，每次运行自动生成）
 
-若根目录 `tests/output/` 下有旧输出文件，可运行 `python3 scripts/migrate_output_to_date_dirs.py` 迁移到对应日期目录。
-
 ## 实现进度
 
 | 模块 | 状态 | 说明 |
