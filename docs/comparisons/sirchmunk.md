@@ -41,16 +41,19 @@
 
 ---
 
-## 二、Context GC 的设计（简要）
+## 二、Context GC 的设计（当前实现）
 
 | 流水线 | 触发 | 动作 |
 |--------|------|------|
 | 增量摘要与分代 | 宿主 `close()` 表示轮次结束 | 单轮摘要 + 历史轮次关联度打分与分代值更新 |
 | 容量阈值合并 | token 达 20%/30%/40%… | 低分代轮次相邻合并，高分代保留 |
+| Checkpoint | 每 N 轮 | 崩溃恢复 |
+| 会话中偏好检测 | 每轮 `close()` | 零 LLM 规则匹配，写入时 exact/keyword_overlap 去重 |
+| 会话结束 | `on_session_end()` | L0/L1/L2 持久化 + 蒸馏管道（偏好/经验/技能） |
 
 - **分代**：前 50% 关联度高 → 老生代保留，后 50% → 新生代合并
-- **形态**：纯 Python 库，宿主注入回调
-- **存储**：内存 `state.rounds`，无持久化
+- **形态**：纯 Python 库，宿主注入回调，MemoryBackend 可插拔
+- **存储**：L0/L1/L2 + 偏好/经验/技能；FileBackend 或自定义后端
 
 ---
 
@@ -63,9 +66,9 @@
 | **输出** | 检索结果、Knowledge Cluster | 送入 LLM 的压缩 messages |
 | **索引** | 无预索引，即时检索 | 无索引，轮次摘要序列 |
 | **压缩** | 无显式压缩，Monte Carlo 采样控制 token | 轮次摘要 + 容量触发合并 |
-| **自演化** | Knowledge Cluster 复用与增量更新 | 分代值累积，关联度驱动保留 |
-| **检索** | 关键词 + Monte Carlo + LLM 合成 | 关联度排序（`compute_relevance`） |
-| **持久化** | DuckDB + Parquet，Knowledge Cluster | 无内置持久化 |
+| **自演化** | Knowledge Cluster 复用与增量更新 | 分代值累积 + 蒸馏管道（经验/技能迭代更新） |
+| **检索** | 关键词 + Monte Carlo + LLM 合成 | FTS5/BM25 跨会话关键词搜索（无向量 DB） |
+| **持久化** | DuckDB + Parquet，Knowledge Cluster | L0/L1/L2 + 偏好/经验/技能，Backend 可插拔 |
 | **架构** | 服务（HTTP/MCP）+ SDK + Web UI | 嵌入宿主进程的库 |
 | **模型** | 需 LLM（关键词、合成）；可选 Embedding（Cluster 复用） | 宿主注入回调 |
 
@@ -91,6 +94,8 @@
 - **分代策略**：基于关联度的保留逻辑，与当前对话更相关的历史不易被合并
 - **可插拔**：摘要、合并、关联度均由回调注入
 - **无第三方依赖**：核心包仅标准库
+- **蒸馏管道**：Task Agent → Distiller → 经验/技能双轨；偏好/经验写入时 keyword_overlap 去重
+- **记忆生命周期**：TTL 老化淘汰 + `memory_inject_max_tokens` 注入容量控制
 
 ### 4.4 互补与组合
 
@@ -111,4 +116,4 @@
 
 - [Sirchmunk 官方仓库](https://github.com/modelscope/sirchmunk)
 - [Sirchmunk 文档](https://modelscope.github.io/sirchmunk-web/)
-- [Context GC 设计文档](./上下文压缩设计.md)
+- [Context GC 设计文档](../design/memory-system.md)

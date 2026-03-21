@@ -369,10 +369,7 @@ context-gc/
 
 **Comparisons**
 
-- [Claude Code](docs/comparisons/claude-code.md) — 与 Claude Code 上下文机制对比
-- [OpenViking](docs/comparisons/openviking.md) — 与 OpenViking 对比
-- [Sirchmunk](docs/comparisons/sirchmunk.md) — 与 Sirchmunk 对比
-- [OpenViking vs Sirchmunk](docs/comparisons/openviking-vs-sirchmunk.md) — 两者横向对比
+- [Claude Code](docs/comparisons/claude-code.md) · [OpenClaw](docs/comparisons/openclaw.md) · [Cursor](docs/comparisons/cursor.md) · [AgentScope](docs/comparisons/agentscope.md) · [LangGraph](docs/comparisons/langgraph.md) · [OpenViking](docs/comparisons/openviking.md) · [Sirchmunk](docs/comparisons/sirchmunk.md) · [MemGPT](docs/comparisons/memgpt.md)
 
 **References**
 

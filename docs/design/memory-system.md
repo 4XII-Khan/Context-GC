@@ -978,16 +978,18 @@ memory_lifecycle:
 
 #### 10.2.2 深度对比
 
-| 方案 | 记忆/上下文机制 | 触发策略 | 保留策略 | 跨会话持久化 | 与 Context GC 核心差异 |
-|------|----------------|----------|----------|--------------|-------------------------|
-| **Claude Code** | Microcompaction（工具大输出落盘+hot tail）+ Auto-Compaction（空间不足时结构化摘要）+ 文件再水合 + `/compact` 手动 | 剩余 token 低于 headroom + 手动 | 结构化 working state + 重读近期文件 + todos | CLAUDE.md、Auto memory 前 200 行 | CC 与 IDE/工具强绑定；Context GC 嵌入宿主、模型无关；无 Microcompaction，有显式分代（关联度±1） |
-| **OpenClaw** | Session + Daily Notes（`memory/YYYY-MM-DD.md`）+ MEMORY.md + memory_search（BM25+向量）；压缩前 memoryFlush 提醒写入 | 接近 compaction 时触发 flush | Agent 自主决定写哪些到 MEMORY | 明文 Markdown，工作区内 | OpenClaw 记忆为文件范式；Context GC 提供 L0/L1/L2 + 蒸馏管道，可作记忆后端或与 OpenViking 配合 |
-| **Cursor** | Rules（.cursor/rules、AGENTS.md）、自动注入打开文件/终端/linter | 无内置压缩 | 规则常驻，会话内上下文随轮次累积 | 无内置，依赖 MCP 扩展（ContextForge、SuperLocalMemory） | Cursor 侧重规则与即时上下文；Context GC 可经 MCP 提供持久记忆与压缩 |
-| **AgentScope** | 内置 memory、memory compression、数据库；ReAct 智能体、Actor 分布式 | 框架内回调 | 由 Agent 与 memory 模块决定 | 数据库 + 可选持久化 | AgentScope 为完整多智能体框架；Context GC 为库，可注入摘要/记忆回调 |
-| **LangGraph** | Checkpoint 每节点后保存，thread_id 组织；short-term（thread 内）与 long-term（跨 thread） | 每节点执行后 | 全图状态快照 | Postgres/Redis/Mongo | LangGraph 侧重工作流状态与断点续跑；Context GC 侧重对话摘要与分代，可提供 `generate_summary` 等 |
-| **OpenViking** | viking:// 目录树，L0/L1/L2 分层，向量+目录递归检索 | 会话结束记忆抽取 | 按目录层级与检索结果加载 | 内置持久化 | OpenViking 为独立服务；Context GC 嵌入、L1 来自 GC 摘要、可选无向量 |
-| **Sirchmunk** | 无预索引，Monte Carlo 采样，Knowledge Cluster 自演化 | 每次搜索 | 相似查询复用 Cluster | DuckDB + Parquet | Sirchmunk 做文档检索；Context GC 做对话记忆，可互补 |
-| **MemGPT** | 分层虚拟内存（main/extended），函数调用管理进出 | LLM 自主调用 | 层级迁移 | 可配置 | MemGPT 为操作系统式内存管理；Context GC 为压缩+持久化，可组合 |
+各方案均有独立对比文档，见 [Comparisons](../comparisons/) 目录。
+
+| 方案 | 独立对比文档 | 记忆/上下文机制 | 触发策略 | 保留策略 | 跨会话持久化 | 与 Context GC 核心差异 |
+|------|--------------|----------------|----------|----------|--------------|-------------------------|
+| **Claude Code** | [claude-code.md](../comparisons/claude-code.md) | Microcompaction + Auto-Compaction + 文件再水合 + `/compact` 手动 | 剩余 token 低于 headroom + 手动 | 结构化 working state + 重读近期文件 + todos | CLAUDE.md、Auto memory 前 200 行 | CC 与 IDE/工具强绑定；Context GC 嵌入宿主、模型无关；无 Microcompaction，有显式分代 |
+| **OpenClaw** | [openclaw.md](../comparisons/openclaw.md) | Session + Daily Notes + MEMORY.md + memory_search（BM25+向量）；memoryFlush 提醒 | 接近 compaction 时 flush | Agent 自主决定写哪些 | 明文 Markdown | OpenClaw 记忆为文件范式；Context GC 提供 L0/L1/L2 + 蒸馏管道 |
+| **Cursor** | [cursor.md](../comparisons/cursor.md) | Rules、自动注入打开文件/终端/linter | 无内置压缩 | 规则常驻 | 依赖 MCP 扩展 | Cursor 侧重规则与即时上下文；Context GC 可经 MCP 提供持久记忆 |
+| **AgentScope** | [agentscope.md](../comparisons/agentscope.md) | memory、memory compression、数据库；ReAct、Actor | 框架内回调 | Agent 与 memory 模块决定 | 数据库 + 可选 | AgentScope 为完整框架；Context GC 为库，可注入回调 |
+| **LangGraph** | [langgraph.md](../comparisons/langgraph.md) | Checkpoint 每节点后，thread_id 组织；short/long-term | 每节点执行后 | 全图状态快照 | Postgres/Redis/Mongo | LangGraph 侧重工作流断点；Context GC 侧重对话摘要与分代 |
+| **OpenViking** | [openviking.md](../comparisons/openviking.md) | viking:// L0/L1/L2，向量+目录递归检索 | 会话结束记忆抽取 | 按目录层级与检索结果加载 | 内置持久化 | OpenViking 为独立服务；Context GC 嵌入、可选无向量 |
+| **Sirchmunk** | [sirchmunk.md](../comparisons/sirchmunk.md) | 无预索引，Monte Carlo 采样，Knowledge Cluster | 每次搜索 | 相似查询复用 Cluster | DuckDB + Parquet | Sirchmunk 做文档检索；Context GC 做对话记忆，可互补 |
+| **MemGPT** | [memgpt.md](../comparisons/memgpt.md) | 分层虚拟内存（main/extended），函数调用管理 | LLM 自主调用 | 层级迁移 | 可配置 | MemGPT 为操作系统式内存管理；Context GC 为压缩+持久化，可组合 |
 
 #### 10.2.3 Context GC 相对劣势（客观对照）
 

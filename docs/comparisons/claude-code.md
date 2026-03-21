@@ -44,12 +44,16 @@ Claude Code 采用**三层压缩**设计，而非单一摘要：
 
 ---
 
-## 二、Context GC 的设计
+## 二、Context GC 的设计（当前实现）
 
 | 流水线 | 触发 | 动作 |
 |--------|------|------|
 | **增量摘要与分代** | 宿主调用 `close()` 表示轮次结束 | 对当前轮产出摘要，对历史轮次做关联度打分与分代值更新 |
 | **容量阈值合并** | token 占用达 20%、30%、40%… | 对低分代（≤0）轮次做相邻合并摘要，高分代保留 |
+| **Checkpoint** | 每 N 轮 | 增量写入，进程崩溃后从断点恢复 |
+| **会话中偏好检测** | 每轮 `close()` | 零 LLM 成本规则匹配，即时写入（含去重） |
+| **会话结束持久化** | `on_session_end()` | L0/L1/L2 分层存储 + 蒸馏管道（Task Agent → Distiller → 经验/技能） |
+| **偏好去重** | `save_user_preferences` | `exact` / `keyword_overlap` 写入前去重 |
 
 ### 2.1 分代策略
 
@@ -61,6 +65,14 @@ Claude Code 采用**三层压缩**设计，而非单一摘要：
 
 - 单轮摘要：结构化纯文本（主题、要点、结论）
 - 合并摘要：仅输入已摘要的 summary，不含本轮原始消息；按梯度控制输出字数
+
+### 2.3 跨会话记忆
+
+- **L0/L1/L2**：会话结束持久化，L0 粗筛、L1 摘要列表、L2 原始对话按需加载
+- **偏好**：会话中规则检测 + 蒸馏 Task Agent 抽取；写入时 `exact`/`keyword_overlap` 去重
+- **经验与技能**：蒸馏管道写入，经验按任务去重（keyword_overlap），技能由 Skill Learner 更新
+- **检索**：FTS5/BM25 跨会话关键词搜索（无向量 DB）
+- **生命周期**：偏好/经验/技能按 TTL 老化淘汰；`memory_inject_max_tokens` 注入容量控制
 
 ---
 
@@ -75,7 +87,7 @@ Claude Code 采用**三层压缩**设计，而非单一摘要：
 | **关联度** | 未明确基于语义关联度；主要靠 focus hint 和 structured sections | 显式 `compute_relevance`，前 50% 老生代、后 50% 新生代 |
 | **恢复机制** | 压缩后重读近期文件、恢复 todos、注入 continuation 指令 | 不重读文件，仅保留摘要序列，由宿主在 `get_messages` 时构建 |
 | **手动控制** | `/compact`、`/compact Focus on X`、CLAUDE.md 中的 Compact Instructions | 宿主控制轮次边界（`close()`），无内置 focus hint |
-| **跨会话记忆** | CLAUDE.md、Auto memory（前 200 行） | 无内置，由宿主持久化 state |
+| **跨会话记忆** | CLAUDE.md、Auto memory（前 200 行） | L0/L1/L2 分层持久化 + 蒸馏管道（偏好/经验/技能） |
 
 ---
 
@@ -108,4 +120,4 @@ Claude Code 采用**三层压缩**设计，而非单一摘要：
 - [How Claude Code works](https://code.claude.com/docs/en/how-claude-code-works)
 - [Inside Claude Code's Compaction System](https://decodeclaude.com/claude-code-compaction/)
 - [How Claude remembers your project](https://code.claude.com/docs/en/memory)
-- [Context GC 设计文档](./上下文压缩设计.md)
+- [Context GC 设计文档](../design/memory-system.md)

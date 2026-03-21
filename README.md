@@ -361,7 +361,7 @@ context-gc/
 
 **Comparisons**
 
-- [Claude Code](docs/comparisons/claude-code.md) · [OpenViking](docs/comparisons/openviking.md) · [Sirchmunk](docs/comparisons/sirchmunk.md) · [OpenViking vs Sirchmunk](docs/comparisons/openviking-vs-sirchmunk.md)
+- [Claude Code](docs/comparisons/claude-code.md) · [OpenClaw](docs/comparisons/openclaw.md) · [Cursor](docs/comparisons/cursor.md) · [AgentScope](docs/comparisons/agentscope.md) · [LangGraph](docs/comparisons/langgraph.md) · [OpenViking](docs/comparisons/openviking.md) · [Sirchmunk](docs/comparisons/sirchmunk.md) · [MemGPT](docs/comparisons/memgpt.md)
 
 **References**
 

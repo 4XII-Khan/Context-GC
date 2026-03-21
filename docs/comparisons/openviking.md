@@ -43,16 +43,19 @@ viking://
 
 ---
 
-## 二、Context GC 的设计（简要）
+## 二、Context GC 的设计（当前实现）
 
 | 流水线 | 触发 | 动作 |
 |--------|------|------|
 | 增量摘要与分代 | 宿主 `close()` 表示轮次结束 | 单轮摘要 + 历史轮次关联度打分与分代值更新 |
 | 容量阈值合并 | token 达 20%/30%/40%… | 低分代轮次相邻合并，高分代保留 |
+| Checkpoint | 每 N 轮 | 崩溃恢复 |
+| 会话中偏好检测 | 每轮 `close()` | 零 LLM 规则匹配，写入时去重 |
+| 会话结束 | `on_session_end()` | L0/L1/L2 持久化 + 蒸馏管道（Task Agent → Distiller → 经验/技能） |
 
 - **分代**：前 50% 关联度高 → 老生代保留，后 50% → 新生代合并
-- **形态**：纯 Python 库，宿主注入 `generate_summary`、`merge_summary`、`compute_relevance`、`estimate_tokens`
-- **存储**：内存中的 `state.rounds`，无持久化、无文件系统
+- **形态**：纯 Python 库，宿主注入回调，MemoryBackend 可插拔
+- **存储**：L0/L1/L2 分层 + 偏好/经验/技能；FileBackend 或自定义后端
 
 ---
 
@@ -62,10 +65,10 @@ viking://
 |------|------------|------------|
 | **定位** | Agent 上下文数据库 | 对话上下文压缩库 |
 | **架构** | 独立服务 + Python 客户端 | 嵌入宿主进程的库 |
-| **存储** | 虚拟文件系统（viking://）、持久化 | 内存 `rounds` 列表，无持久化 |
-| **上下文类型** | 记忆 + 资源 + 技能 统一管理 | 仅对话消息的摘要序列 |
-| **分层** | L0/L1/L2 三层，按需加载 | 轮次摘要 + 分代值 |
-| **检索** | 目录递归 + 语义搜索 | 关联度排序（`compute_relevance`） |
+| **存储** | 虚拟文件系统（viking://）、持久化 | L0/L1/L2 分层 + 偏好/经验/技能；Backend 可插拔 |
+| **上下文类型** | 记忆 + 资源 + 技能 统一管理 | 对话摘要序列 + 偏好/经验/技能 |
+| **分层** | L0/L1/L2 三层，按需加载 | L0/L1/L2 分层 + 轮次分代值（gen_score） |
+| **检索** | 目录递归 + 语义搜索 | FTS5/BM25 关键词跨会话搜索（无向量 DB） |
 | **压缩** | 会话级记忆抽取、长期记忆更新 | 轮次摘要 + 容量触发合并 |
 | **保留策略** | L0/L1 常驻可检索，L2 按需 | 分代值：老生代保留，新生代合并 |
 | **模型依赖** | 需 VLM + Embedding 模型 | 宿主注入回调，无内置模型 |
@@ -86,23 +89,25 @@ viking://
 
 ### 4.2 Context GC 的特点
 
-- **轻量嵌入**：无服务、无持久化，宿主 `push`/`close`/`get_messages` 即可
+- **轻量嵌入**：无独立服务，Backend 可插拔，宿主 `push`/`close`/`get_messages` 即可
 - **分代策略**：基于关联度的保留逻辑，与当前对话更相关的历史不易被合并
 - **可插拔**：摘要、合并、关联度、token 估算均由回调注入，适配不同模型与业务
 - **无第三方依赖**：核心包仅用标准库
+- **蒸馏管道**：Task Agent → Distiller → 经验/技能双轨输出；偏好/经验写入时 keyword_overlap 去重
+- **记忆生命周期**：偏好/经验按 TTL 老化淘汰；`memory_inject_max_tokens` 注入容量控制
 
 ### 4.3 互补关系
 
 | 场景 | 更适合 |
 |------|--------|
 | Agent 需持久化记忆、管理资源与技能 | OpenViking |
-| 单次对话/会话内的上下文压缩 | Context GC |
+| 会话内上下文压缩 + 跨会话持久化与蒸馏 | Context GC |
 | 需要 L0/L1/L2 分层、目录检索 | OpenViking |
 | 轻量嵌入、不部署服务 | Context GC |
 | 需可视化检索轨迹、可观测 | OpenViking |
 | 纯对话轮次压缩、分代合并 | Context GC |
 
-**可组合**：OpenViking 管理长期记忆与资源，Context GC 负责单次会话内的轮次压缩；两者可协同使用。
+**可组合**：OpenViking 管理长期记忆与资源，Context GC 负责会话内轮次压缩与蒸馏产出；两者可协同使用。
 
 ---
 
@@ -111,4 +116,4 @@ viking://
 - [OpenViking 官方仓库](https://github.com/volcengine/OpenViking)
 - [OpenViking 文档](https://openviking.ai)
 - [OpenClaw 与 OpenViking 集成](https://github.com/volcengine/OpenViking#openclaw-context-plugin-details)
-- [Context GC 设计文档](./上下文压缩设计.md)
+- [Context GC 设计文档](../design/memory-system.md)
