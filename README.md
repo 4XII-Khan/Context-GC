@@ -131,7 +131,7 @@ pip install -e ".[dev]"       # Core + test deps (pytest, pytest-asyncio, python
 pip install -e ".[example]"   # Core + example deps (openai, python-dotenv)
 ```
 
-### Configuration (optional, for E2E and examples)
+### Configuration (required for E2E and examples)
 
 ```bash
 cp .env.example .env
@@ -140,25 +140,37 @@ cp .env.example .env
 
 ### In-Session Compression
 
+**Option 1: Use default adapters** (recommended for quick start)
+
+After configuring `.env`, call `ContextGCOptions.with_env_defaults()`. LLM, token estimation, and relevance scoring are read from env vars and built-in defaults. Requires `pip install context-gc[example]`.
+
 ```python
 from context_gc import ContextGC, ContextGCOptions
 
-opts = ContextGCOptions(
-    max_input_tokens=5000,
-    generate_summary=your_generate_summary,
-    merge_summary=your_merge_summary,
-    compute_relevance=your_compute_relevance,
-    estimate_tokens=your_estimate_tokens,
-)
+# Reads CONTEXT_GC_API_KEY, CONTEXT_GC_BASE_URL, CONTEXT_GC_MODEL from env
+opts = ContextGCOptions.with_env_defaults(max_input_tokens=5000)
 gc = ContextGC(opts)
 
 # Each round
 gc.push([{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}])
-await gc.close()  # Summarize + score + merge + checkpoint + preference detection
+await gc.close()  # Summarize + score + merge + checkpoint
 
 # Get context for the main LLM
 messages = await gc.get_messages(current_messages)
 ```
+
+**Option 2: Custom callbacks**
+
+Override individual callbacks (e.g. use embedding for relevance) while keeping others at default:
+
+```python
+opts = ContextGCOptions.with_env_defaults(
+    max_input_tokens=5000,
+    compute_relevance=my_embedding_relevance,
+)
+```
+
+See [`examples/`](examples/) for full custom implementations.
 
 ### Memory Persistence + Distillation
 

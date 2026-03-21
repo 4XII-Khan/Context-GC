@@ -44,7 +44,8 @@ class ContextGCOptions:
     """
     ContextGC 配置项。
 
-    回调均由实现方注入；持久化相关配置可选。
+    回调可由实现方注入，或使用 with_env_defaults() 从环境变量获取默认适配器。
+    持久化相关配置可选。
     """
 
     max_input_tokens: int
@@ -53,6 +54,40 @@ class ContextGCOptions:
     compute_relevance: Callable[[str, list[str]], Awaitable[list[float]]]
     estimate_tokens: Callable[[object], int]
     capacity_threshold: float = 0.1
+
+    @classmethod
+    def with_env_defaults(
+        cls,
+        max_input_tokens: int = 5000,
+        *,
+        generate_summary=None,
+        merge_summary=None,
+        compute_relevance=None,
+        estimate_tokens=None,
+        **kwargs,
+    ) -> "ContextGCOptions":
+        """
+        从环境变量构建带默认适配器的配置。
+
+        环境变量：CONTEXT_GC_API_KEY、CONTEXT_GC_BASE_URL、CONTEXT_GC_MODEL
+        需安装：pip install context-gc[example]
+        传入同名参数可覆盖默认回调。
+        """
+        from .defaults import (
+            default_generate_summary,
+            default_merge_summary,
+            default_compute_relevance,
+            default_estimate_tokens,
+        )
+
+        return cls(
+            max_input_tokens=max_input_tokens,
+            generate_summary=generate_summary or default_generate_summary,
+            merge_summary=merge_summary or default_merge_summary,
+            compute_relevance=compute_relevance or default_compute_relevance,
+            estimate_tokens=estimate_tokens or default_estimate_tokens,
+            **kwargs,
+        )
     reserve_for_output: int = 4096
     merge_gradient_by_tokens: list[tuple[int, float | int]] | None = None
 

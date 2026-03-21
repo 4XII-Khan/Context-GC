@@ -127,7 +127,7 @@ pip install -e ".[dev]"       # 安装核心 + 测试依赖（pytest, pytest-asy
 pip install -e ".[example]"   # 安装核心 + 示例依赖（openai, python-dotenv）
 ```
 
-### 配置（可选，E2E 与示例用）
+### 配置（E2E 与示例须配置模型）
 
 ```bash
 cp .env.example .env
@@ -136,25 +136,37 @@ cp .env.example .env
 
 ### 会话内压缩示例
 
+**方式一：使用默认适配器**（推荐快速上手）
+
+配置 `.env` 后，调用 `ContextGCOptions.with_env_defaults()` 即可，LLM、token 估算、关联度均从环境变量与内置默认实现获取。需安装 `pip install context-gc[example]`。
+
 ```python
 from context_gc import ContextGC, ContextGCOptions
 
-opts = ContextGCOptions(
-    max_input_tokens=5000,
-    generate_summary=your_generate_summary,
-    merge_summary=your_merge_summary,
-    compute_relevance=your_compute_relevance,
-    estimate_tokens=your_estimate_tokens,
-)
+# 从环境变量读取 CONTEXT_GC_API_KEY、CONTEXT_GC_BASE_URL、CONTEXT_GC_MODEL
+opts = ContextGCOptions.with_env_defaults(max_input_tokens=5000)
 gc = ContextGC(opts)
 
 # 每轮
 gc.push([{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}])
-await gc.close()  # 摘要 + 分代 + 合并 + checkpoint + 偏好信号检测
+await gc.close()  # 摘要 + 分代 + 合并 + checkpoint
 
 # 获取上下文
 messages = await gc.get_messages(current_messages)
 ```
+
+**方式二：自定义回调**
+
+需控制摘要策略、关联度算法或接入自有 LLM 时，可自行实现回调并传入，支持部分覆盖默认值：
+
+```python
+opts = ContextGCOptions.with_env_defaults(
+    max_input_tokens=5000,
+    compute_relevance=my_embedding_relevance,  # 仅覆盖关联度，其余用默认
+)
+```
+
+完整自定义示例见 [`examples/`](examples/)。
 
 ### 记忆持久化 + 蒸馏示例
 
