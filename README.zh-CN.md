@@ -4,7 +4,7 @@
 
 # Context GC
 
-**LLM Agent 的智能上下文管理方案**
+**面向 LLM Agent 的上下文代谢与记忆沉淀引擎**
 
 *压缩 · 持久化 · 蒸馏 · 注入 — 面向生产环境的完整上下文生命周期*
 
@@ -22,7 +22,7 @@
 
 <br>
 
-[设计文档](docs/design/memory-system.md) · [快速开始](#快速开始) · [核心能力](#核心能力) · [时序图](#完整时序图) · [评测](#100-轮测试与评估) · [文档](#设计文档)
+[设计文档](docs/design/memory-system.md) · [为什么](#为什么-context-gc) · [快速开始](#快速开始) · [核心能力](#核心能力) · [时序图](#完整时序图) · [评测](#100-轮集成测试) · [文档](#设计文档)
 
 <br>
 
@@ -36,9 +36,26 @@
 
 ---
 
+## 为什么 Context GC？
+
 **Context GC** 把上下文当作可回收资源：按相关性保留、按老化度代谢、按价值沉淀。让 AI 的记忆可延续、更懂你，而不是更长。
 
-纯库形态、模型无关的对话上下文管理方案，适用于基于 LLM 的对话 / Agent 系统。会话内通过分代标注与容量触发合并实现可持续压缩；会话结束时将摘要映射为 L0/L1/L2 三层持久化，并通过蒸馏管道提取用户偏好、经验与私有化技能，形成"压缩 → 持久化 → 蒸馏 → 注入"的完整闭环。
+LLM 上下文窗口有限，对话却会不断增长。传统方案要么**盲目截断**（丢掉关键上下文），要么**均匀压缩**（在不相关历史上浪费 token），要么**依赖向量数据库**（增加基础设施复杂度）。Context GC 采用另一种思路：把上下文管理当作**垃圾回收问题**——保留重要的、压缩老化的、将知识沉淀到长期记忆。
+
+### Context GC vs. 传统方案
+
+| 维度 | 截断 | 固定摘要 | 向量检索记忆 | ✨ Context GC |
+| ---- | ---- | -------- | ------------ | ------------- |
+| **典型代表** | 简单实现、部分框架 | 均匀每轮摘要 | OpenViking、语义检索类方案 | 本项目 |
+| 💰 部署成本 | 无 | 低 | 高（VectorDB） | ✅ 零基础设施 |
+| 🎯 上下文质量 | ❌ 丢失旧上下文 | ⚠️ 均匀压缩 | ⚠️ 检索噪声 | ✅ 分代保留重要轮次 |
+| 🧠 长期学习 | ❌ 无 | ❌ 无 | ❌ 无 | ✅ 蒸馏 → 偏好/经验/技能 |
+| 🔄 崩溃恢复 | ❌ 无 | ❌ 无 | N/A | ✅ 每 N 轮 Checkpoint |
+| ⚡ LLM 成本 | 无 | 高（每轮） | Embedding 成本 | ✅ 步进打分，偏好检测零 LLM |
+
+与 Claude Code、OpenViking、MemGPT 等**具体方案**的深度对比见 [Comparisons](docs/comparisons/claude-code.md) 及同目录下各独立文档。
+
+---
 
 ## 核心能力
 
@@ -98,7 +115,9 @@
 | **后端可插拔** | `MemoryBackend` 协议：SQLite、文件系统、对象存储等 |
 | **零依赖** | 核心仅用 Python 标准库；dev/example 为可选 extras |
 
-## 安装
+## 快速开始
+
+### 安装
 
 核心包零第三方依赖，仅用 Python 标准库。
 
@@ -108,16 +127,14 @@ pip install -e ".[dev]"       # 安装核心 + 测试依赖（pytest, pytest-asy
 pip install -e ".[example]"   # 安装核心 + 示例依赖（openai, python-dotenv）
 ```
 
-### 大模型配置（集成测试 / 示例用）
+### 配置（可选，E2E 与示例用）
 
 ```bash
 cp .env.example .env
 # 编辑 .env，填入 CONTEXT_GC_API_KEY 等
 ```
 
-## 快速开始
-
-### 会话内压缩（已实现）
+### 会话内压缩示例
 
 ```python
 from context_gc import ContextGC, ContextGCOptions
@@ -139,7 +156,7 @@ await gc.close()  # 摘要 + 分代 + 合并 + checkpoint + 偏好信号检测
 messages = await gc.get_messages(current_messages)
 ```
 
-### 记忆持久化 + 蒸馏
+### 记忆持久化 + 蒸馏示例
 
 ```python
 from context_gc import ContextGC, ContextGCOptions, FileBackend, build_memory_injection
@@ -213,6 +230,43 @@ sequenceDiagram
 ```
 
 ---
+
+## 实现进度
+
+### 1. 会话内压缩
+
+| 模块 | 状态 | 说明 |
+|------|------|------|
+| 增量摘要 + 分代打分 | ✅ 已实现 | `core.py` + `generational.py` + `state.py` |
+| 容量阈值触发合并 | ✅ 已实现 | `compaction.py`，梯度控制压缩比 |
+
+### 2. 会话级记忆持久化
+
+| 模块 | 状态 | 说明 |
+|------|------|------|
+| MemoryBackend 协议 + FileBackend | ✅ 已实现 | `storage/backend.py` + `storage/file_backend.py` |
+| L0/L1/L2 分层存储 | ✅ 已实现 | 会话结束时 `on_session_end()` 写入 |
+| Checkpoint 崩溃恢复 | ✅ 已实现 | `storage/checkpoint.py`，每 N 轮增量写入 |
+| 会话中偏好检测 | ✅ 已实现 | `memory/preference.py`，零 LLM 成本 |
+| 跨会话关键词检索 | ✅ 已实现 | FTS5/BM25，无向量 DB |
+| 会话过期清理 | ✅ 已实现 | `storage/cleanup.py` |
+
+### 3. 记忆蒸馏与长期学习
+
+| 模块 | 状态 | 说明 |
+|------|------|------|
+| 蒸馏管道 | ✅ 已实现 | `distillation/`：Task Agent → Distiller → 经验/技能 |
+| 偏好去重 | ✅ 已实现 | `save_user_preferences`，exact / keyword_overlap |
+| 经验去重 | ✅ 已实现 | `experience_writer.py`，keyword_overlap |
+| 记忆生命周期 | ✅ 已实现 | `memory/lifecycle.py`，TTL 老化 + 注入容量控制 |
+
+### 4. 测试
+
+| 模块 | 状态 | 说明 |
+|------|------|------|
+| 单元测试 | ✅ 已实现 | 28 个用例 |
+| E2E 集成测试 | ✅ 已实现 | 7 个 Case，52/53 通过 |
+| 100 轮集成测试 | ✅ 已实现 | 101 轮，73% 压缩比 |
 
 ## 测试
 
@@ -294,43 +348,6 @@ python3 -m pytest tests/test_100_rounds.py -v -s
 - `tests/output/YYYY-MM-DD/test_100_rounds_final_context.txt`：最终上下文完整摘要（压缩后）
 - `tests/output/YYYY-MM-DD/test_100_rounds_evaluation.md`：评估报告（含数据概览，每次运行自动生成）
 
-## 实现进度
-
-### 1. 会话内压缩
-
-| 模块 | 状态 | 说明 |
-|------|------|------|
-| 增量摘要 + 分代打分 | ✅ 已实现 | `core.py` + `generational.py` + `state.py` |
-| 容量阈值触发合并 | ✅ 已实现 | `compaction.py`，梯度控制压缩比 |
-
-### 2. 会话级记忆持久化
-
-| 模块 | 状态 | 说明 |
-|------|------|------|
-| MemoryBackend 协议 + FileBackend | ✅ 已实现 | `storage/backend.py` + `storage/file_backend.py` |
-| L0/L1/L2 分层存储 | ✅ 已实现 | 会话结束时 `on_session_end()` 写入 |
-| Checkpoint 崩溃恢复 | ✅ 已实现 | `storage/checkpoint.py`，每 N 轮增量写入 |
-| 会话中偏好检测 | ✅ 已实现 | `memory/preference.py`，零 LLM 成本 |
-| 跨会话关键词检索 | ✅ 已实现 | FTS5/BM25，无向量 DB |
-| 会话过期清理 | ✅ 已实现 | `storage/cleanup.py` |
-
-### 3. 记忆蒸馏与长期学习
-
-| 模块 | 状态 | 说明 |
-|------|------|------|
-| 蒸馏管道 | ✅ 已实现 | `distillation/`：Task Agent → Distiller → 经验/技能 |
-| 偏好去重 | ✅ 已实现 | `save_user_preferences`，exact / keyword_overlap |
-| 经验去重 | ✅ 已实现 | `experience_writer.py`，keyword_overlap |
-| 记忆生命周期 | ✅ 已实现 | `memory/lifecycle.py`，TTL 老化 + 注入容量控制 |
-
-### 4. 测试
-
-| 模块 | 状态 | 说明 |
-|------|------|------|
-| 单元测试 | ✅ 已实现 | 28 个用例 |
-| E2E 集成测试 | ✅ 已实现 | 7 个 Case，52/53 通过 |
-| 100 轮集成测试 | ✅ 已实现 | 101 轮，73% 压缩比 |
-
 ## 项目结构
 
 ```
@@ -364,20 +381,20 @@ context-gc/
 ├── tests/
 │   ├── test_storage.py          # FileBackend + Checkpoint
 │   ├── test_memory.py           # PreferenceDetector + Lifecycle
-│   ├── test_generational.py     # Generational scoring
-│   ├── test_distillation.py     # Distillation models + tools
-│   ├── test_100_rounds.py       # 100-round end-to-end integration
-│   └── data/dialogues.md        # Test data
+│   ├── test_generational.py     # 分代打分
+│   ├── test_distillation.py     # 蒸馏模型与工具
+│   ├── test_e2e_cases.py        # E2E 集成（7 Case）
+│   ├── test_100_rounds.py       # 100 轮压缩评测
+│   └── data/dialogues.md        # 测试数据
 │
 ├── examples/
 │   └── context_gc_with_storage.py  # 完整持久化 + 蒸馏示例
 │
 ├── docs/
 │   ├── design/
-│   │   ├── memory-system.md              # Full design (13 chapters)
-│   │   └── context-compression.md        # In-session compression design
-│   ├── comparisons/                      # Competitive analysis
-│   └── references/                       # Guides & references
+│   │   ├── memory-system.md              # 完整设计（13 章）
+│   │   └── context-compression.md        # 会话内压缩设计
+│   └── comparisons/                      # 竞品对比（8 个方案）
 └── README.md
 ```
 

@@ -4,7 +4,7 @@
 
 # Context GC
 
-**Intelligent Context Management for LLM Agents**
+**Context Metabolism & Memory Sedimentation Engine for LLM Agents**
 
 *Compress · Persist · Distill · Inject — the complete lifecycle for production LLM applications*
 
@@ -22,7 +22,7 @@
 
 <br>
 
-[Design Doc](docs/design/memory-system.md) · [Quick Start](#quick-start) · [Features](#core-capabilities) · [Sequence Diagram](#-complete-sequence-diagram) · [Benchmarks](#100-round-test--evaluation) · [Docs](#documentation)
+[Design Doc](docs/design/memory-system.md) · [Why](#-why-context-gc) · [Quick Start](#quick-start) · [Features](#core-capabilities) · [Sequence Diagram](#-complete-sequence-diagram) · [Benchmarks](#100-round-integration-test) · [Docs](#documentation)
 
 <br>
 
@@ -106,13 +106,16 @@ Extract **user preferences**, **experiences**, and **personalized skills** from 
 
 ### Context GC vs. Traditional Approaches
 
-| Dimension | Truncation | Fixed Summarization | Vector RAG | ✨ Context GC |
-| --------- | ---------- | ------------------- | ---------- | ------------- |
+| Dimension | Truncation | Fixed Summarization | Vector-Retrieval Memory | ✨ Context GC |
+| --------- | ---------- | ------------------- | ----------------------- | ------------- |
+| **Typical examples** | Simple impl, some frameworks | Uniform per-round summarization | OpenViking, semantic-retrieval systems | This project |
 | 💰 Setup Cost | None | Low | High (VectorDB) | ✅ Zero infrastructure |
 | 🎯 Context Quality | ❌ Loses old context | ⚠️ Equal compression | ⚠️ Retrieval noise | ✅ Generational — keeps what matters |
 | 🧠 Long-Term Learning | ❌ None | ❌ None | ❌ None | ✅ Distillation → preferences, experiences, skills |
 | 🔄 Crash Recovery | ❌ None | ❌ None | N/A | ✅ Checkpoint every N rounds |
 | ⚡ LLM Cost | None | High (every round) | Embedding cost | ✅ Step-based scoring, zero-LLM preference detection |
+
+For in-depth comparison with **specific solutions** (Claude Code, OpenViking, MemGPT, etc.), see [Comparisons](docs/comparisons/claude-code.md) and the standalone docs in that directory.
 
 ---
 
@@ -126,6 +129,13 @@ The core package has **zero third-party dependencies** — standard library only
 pip install -e .              # Install core package (editable mode)
 pip install -e ".[dev]"       # Core + test deps (pytest, pytest-asyncio, python-dotenv)
 pip install -e ".[example]"   # Core + example deps (openai, python-dotenv)
+```
+
+### Configuration (optional, for E2E and examples)
+
+```bash
+cp .env.example .env
+# Edit .env and add CONTEXT_GC_API_KEY, etc.
 ```
 
 ### In-Session Compression
@@ -225,6 +235,45 @@ sequenceDiagram
 
 ---
 
+## 📋 Implementation Status
+
+### 1. In-Session Compression
+
+| Module | Status | Details |
+| ------ | ------ | ------- |
+| Incremental summarization + generational scoring | ✅ Done | `core.py` + `generational.py` + `state.py` |
+| Capacity-triggered merging | ✅ Done | `compaction.py`, gradient-based compression ratio |
+
+### 2. Session-Level Memory Persistence
+
+| Module | Status | Details |
+| ------ | ------ | ------- |
+| MemoryBackend + FileBackend | ✅ Done | `storage/backend.py` + `storage/file_backend.py` |
+| L0/L1/L2 layered storage | ✅ Done | Written at `on_session_end()` |
+| Checkpoint crash recovery | ✅ Done | `storage/checkpoint.py`, incremental every N rounds |
+| In-session preference detection | ✅ Done | `memory/preference.py`, zero LLM cost |
+| Cross-session keyword search | ✅ Done | FTS5/BM25, no vector DB |
+| Session expiry cleanup | ✅ Done | `storage/cleanup.py` |
+
+### 3. Memory Distillation & Long-Term Learning
+
+| Module | Status | Details |
+| ------ | ------ | ------- |
+| Distillation pipeline | ✅ Done | `distillation/`: Task Agent → Distiller → experience/skills |
+| Preference deduplication | ✅ Done | `save_user_preferences`, exact / keyword_overlap |
+| Experience deduplication | ✅ Done | `experience_writer.py`, keyword_overlap |
+| Memory lifecycle | ✅ Done | `memory/lifecycle.py`, TTL aging + injection capacity control |
+
+### 4. Testing
+
+| Module | Status | Details |
+| ------ | ------ | ------- |
+| Unit tests | ✅ Done | 28 cases |
+| E2E integration tests | ✅ Done | 7 cases, 52/53 passed |
+| 100-round integration test | ✅ Done | 101 rounds, 73% compression ratio |
+
+---
+
 ## 📊 Testing
 
 Tests are organized by core capability. Run all unit tests:
@@ -301,45 +350,6 @@ Output: `tests/output/YYYY-MM-DD/test_100_rounds_log.txt`, `test_100_rounds_fina
 
 ---
 
-## 📋 Implementation Status
-
-### 1. In-Session Compression
-
-| Module | Status | Details |
-| ------ | ------ | ------- |
-| Incremental summarization + generational scoring | ✅ Done | `core.py` + `generational.py` + `state.py` |
-| Capacity-triggered merging | ✅ Done | `compaction.py`, gradient-based compression ratio |
-
-### 2. Session-Level Memory Persistence
-
-| Module | Status | Details |
-| ------ | ------ | ------- |
-| MemoryBackend + FileBackend | ✅ Done | `storage/backend.py` + `storage/file_backend.py` |
-| L0/L1/L2 layered storage | ✅ Done | Written at `on_session_end()` |
-| Checkpoint crash recovery | ✅ Done | `storage/checkpoint.py`, incremental every N rounds |
-| In-session preference detection | ✅ Done | `memory/preference.py`, zero LLM cost |
-| Cross-session keyword search | ✅ Done | FTS5/BM25, no vector DB |
-| Session expiry cleanup | ✅ Done | `storage/cleanup.py` |
-
-### 3. Memory Distillation & Long-Term Learning
-
-| Module | Status | Details |
-| ------ | ------ | ------- |
-| Distillation pipeline | ✅ Done | `distillation/`: Task Agent → Distiller → experience/skills |
-| Preference deduplication | ✅ Done | `save_user_preferences`, exact / keyword_overlap |
-| Experience deduplication | ✅ Done | `experience_writer.py`, keyword_overlap |
-| Memory lifecycle | ✅ Done | `memory/lifecycle.py`, TTL aging + injection capacity control |
-
-### 4. Testing
-
-| Module | Status | Details |
-| ------ | ------ | ------- |
-| Unit tests | ✅ Done | 28 cases |
-| E2E integration tests | ✅ Done | 7 cases, 52/53 passed |
-| 100-round integration test | ✅ Done | 101 rounds, 73% compression ratio |
-
----
-
 ## 🏗️ Project Structure
 
 ```
@@ -363,12 +373,11 @@ context-gc/
 │       ├── distiller.py     # Success/failure analysis
 │       ├── skill_learner.py # Skill updates
 │       └── experience_writer.py
-├── tests/                   # 26 unit tests + 100-round integration
+├── tests/                   # 28 unit tests + E2E (7 cases) + 100-round
 ├── examples/                # Full working example
 └── docs/
     ├── design/              # Architecture & design specs
-    ├── comparisons/         # Competitive analysis
-    └── references/          # Guides
+    └── comparisons/         # Competitive analysis (8 solutions)
 ```
 
 ---
