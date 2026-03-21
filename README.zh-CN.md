@@ -1,42 +1,38 @@
-<h1 align="center">Context GC</h1>
+<div align="center">
 
-<p align="center">
-  <strong>压缩 → 持久化 → 蒸馏 → 注入，LLM Agent 的完整上下文生命周期管理。</strong>
-</p>
+<img src="assets/logo.png" alt="Context GC" width="120" style="border-radius: 50%;">
 
-<p align="center">
-  <a href="https://github.com/4XII-Khan/Context-GC/releases"><img src="https://img.shields.io/badge/release-v0.1.0-green.svg" alt="Release v0.1.0"></a>
-  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10+-blue.svg" alt="Python 3.10+"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-green.svg" alt="License"></a>
-  <a href="tests/"><img src="https://img.shields.io/badge/tests-26%20passed-brightgreen.svg" alt="Tests"></a>
-  <a href="#"><img src="https://img.shields.io/badge/dependencies-zero-orange.svg" alt="Zero Dependencies"></a>
-  <a href="https://github.com/4XII-Khan/Context-GC/commits/main"><img src="https://img.shields.io/github/last-commit/4XII-Khan/Context-GC?color=green" alt="Last Commit"></a>
-</p>
+# Context GC
 
-<p align="center">
-  <code>Python</code> · <code>AsyncIO</code> · <code>零依赖</code> · <code>模型无关</code> · <code>后端可插拔</code>
-</p>
+**LLM Agent 的智能上下文管理方案**
 
-<p align="center">
-  📖 <a href="docs/design/memory-system.md"><strong>设计文档</strong></a> ·
-  <a href="#快速开始"><strong>快速开始</strong></a> ·
-  <a href="#核心能力"><strong>核心能力</strong></a> ·
-  <a href="#100-轮测试与评估"><strong>评测</strong></a> ·
-  <a href="#设计文档"><strong>文档</strong></a>
-</p>
+*压缩 · 持久化 · 蒸馏 · 注入 — 面向生产环境的完整上下文生命周期*
 
-<p align="center">
-  🗜️ <strong>分代压缩</strong> •
-  🧠 <strong>L0/L1/L2 分层记忆</strong> •
-  🔬 <strong>记忆蒸馏</strong><br>
-  ⚡ <strong>零 LLM 偏好检测</strong> •
-  🔄 <strong>崩溃恢复</strong> •
-  📚 <strong>技能学习</strong>
-</p>
+<br>
 
-<p align="center">
-  <a href="README.md">English</a> | <b>中文</b>
-</p>
+[![Release](https://img.shields.io/badge/release-v0.1.0-green.svg)](https://github.com/4XII-Khan/Context-GC/releases)
+[![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-26%20passed-brightgreen.svg)](tests/)
+[![Dependencies](https://img.shields.io/badge/dependencies-zero-orange.svg)](#)
+
+<br>
+
+<code>Python</code> · <code>AsyncIO</code> · <code>模型无关</code> · <code>零依赖</code> · <code>后端可插拔</code>
+
+<br>
+
+[设计文档](docs/design/memory-system.md) · [快速开始](#快速开始) · [核心能力](#核心能力) · [评测](#100-轮测试与评估) · [文档](#设计文档)
+
+<br>
+
+**分代压缩** · **L0/L1/L2 分层记忆** · **蒸馏管道** · **崩溃恢复** · **技能学习**
+
+<br>
+
+[English](README.md) · [中文](README.zh-CN.md)
+
+</div>
 
 ---
 
@@ -44,31 +40,51 @@
 
 ## 核心能力
 
-### 会话内压缩
+### 1. 会话内压缩
 
-- **增量摘要与分代标注**：每轮结束时产出摘要，对历史轮次做关联度计算与 gen_score 更新（衰减 + clamp）
-- **容量阈值触发合并**：token 占用达预设档位（20%/30%/40%…）时，低分代轮次相邻合并
-- **步进式打分**：每隔 N 轮打一次分，中间轮次沿用上次 gen_score，降低 LLM 调用频率
+在固定上下文窗口内支撑长对话，通过**分代垃圾回收**：按关联度语义打分、保留高价值轮次、合并低价值历史。
 
-### 会话级记忆持久化
+| 能力 | 说明 |
+| ---- | ---- |
+| **增量摘要** | 每轮产出结构化摘要（主题、要点、结论）；输入 = 历史摘要 + 本轮消息 |
+| **分代打分（`gen_score`）** | 每轮关联度排序：前 50% → 老生代（+1），后 50% → 新生代（−1）；每轮 ±1 限制，平滑衰减 |
+| **容量阈值触发合并** | Token 占用达可配置档位（20%/30%/40%…）时，低 `gen_score` 轮次相邻合并；高分代保留 |
+| **步进式打分** | 每隔 N 轮打一次分，中间轮次沿用上次 `gen_score` — 降低 LLM 调用频率 |
+| **自动流水线** | 摘要与合并在 `close()` 内执行；宿主仅推送消息并在每轮调用 `close()` |
 
-- **L0/L1/L2 分层**：L0（快速粗筛，50–200 tokens）→ L1（GC 摘要列表，详细导航）→ L2（原始对话，按需回溯）
-- **Checkpoint 崩溃恢复**：每 N 轮增量写入 checkpoint，进程崩溃后可从断点恢复
-- **会话中即时偏好抽取**：`close()` 时零 LLM 成本关键词检测，显式偏好立即写入
-- **跨会话检索**：FTS5 / BM25 无向量检索，无 Embedding 依赖
+### 2. 会话级记忆持久化
 
-### 记忆蒸馏与长期学习
+会话结束时将对话状态持久化为**三层检索结构**；支持跨会话检索，无需向量数据库。
 
-- **三阶段管道**：Task Agent → 蒸馏（成功/失败分析）→ 写入（偏好 + 经验 + 私有化技能）
-- **经验去重与冲突**：任务归一化、语义去重（exact / keyword_overlap / llm_similar）、冲突策略（append / newer_wins / keep_both / llm_merge）
-- **记忆生命周期**：偏好/经验 TTL 老化淘汰 + 注入时容量控制（`memory_inject_max_tokens`）
-- **成本预算**：蒸馏管道 token 预算封顶，超限自动 skip 低优先级任务
+| 能力 | 说明 |
+| ---- | ---- |
+| **L0 / L1 / L2 分层存储** | **L0**（~50–200 tokens）：L1 的粗筛摘要；**L1**：完整 GC 摘要列表，用于详细导航；**L2**：原始对话（按需加载） |
+| **Checkpoint 与崩溃恢复** | 每 N 轮增量 checkpoint；进程崩溃后从最后断点恢复，无数据丢失 |
+| **会话中偏好检测** | 在 `close()` 时：零 LLM 成本关键词/正则检测显式偏好；命中后即时写入用户偏好 |
+| **跨会话关键词检索** | FTS5 / BM25 全文检索 L0/L1；无嵌入向量、无向量库；可按用户/Agent 过滤会话 |
 
-### 架构特点
+### 3. 记忆蒸馏与长期学习
 
-- **纯库嵌入**：宿主注入回调，无强制服务依赖
-- **模型无关**：`generate_summary`、`compute_relevance` 等回调由实现方注入，可切换任意 LLM
-- **后端可插拔**：MemoryBackend 协议支持 SQLite、文件系统、对象存储等
+从已完成会话中抽取**用户偏好**、**用户经验**、**私有化技能**，通过可配置蒸馏管道持续学习。
+
+| 能力 | 说明 |
+| ---- | ---- |
+| **三阶段管道** | **Task Agent** → 抽取带成功/失败标注的任务；**Distiller** → 分析执行结果；**Writers** → 写入偏好、经验、技能更新 |
+| **用户偏好** | 写作风格、编码习惯、纠正记录、显式偏好；按用户存储；会话开始时注入 |
+| **用户经验** | 按任务划分的成功模式与失败反模式；每任务独立目录；用于决策优化 |
+| **技能（公共 / 私有）** | 公共：跨用户共享；私有：用户级；均可通过蒸馏更新 |
+| **去重与冲突处理** | 语义去重：`exact` / `keyword_overlap` / `llm_similar`；冲突策略：`append` / `newer_wins` / `keep_both` / `llm_merge` |
+| **记忆生命周期** | 偏好/经验 TTL 老化淘汰；`memory_inject_max_tokens` 控制注入容量上限 |
+| **成本预算** | 蒸馏管道 token 预算封顶；超限时自动跳过低优先级任务 |
+
+### 4. 架构特点
+
+| 特性 | 说明 |
+| ---- | ---- |
+| **纯库嵌入** | 宿主注入回调；无强制服务，进程内运行 |
+| **模型无关** | `generate_summary`、`merge_summary`、`compute_relevance`、`estimate_tokens` 由宿主注入 — 可接入任意 LLM 或启发式 |
+| **后端可插拔** | `MemoryBackend` 协议：SQLite、文件系统、对象存储等 |
+| **零依赖** | 核心仅用 Python 标准库；dev/example 为可选 extras |
 
 ## 安装
 
@@ -133,19 +149,60 @@ injection = build_memory_injection(preferences=prefs, experiences=exps, skills=s
 
 完整用例见 [`examples/context_gc_with_storage.py`](examples/context_gc_with_storage.py)。
 
-## 100 轮测试与评估
+## 测试
 
-配置 `.env` 后运行测试：
+按核心能力组织测试。运行全部单元测试：
 
 ```bash
-python3 tests/test_100_rounds.py
-# 或
+python3 -m pytest tests/ -v
+```
+
+### 能力与测试对应
+
+| 核心能力 | 测试文件 | 覆盖内容 |
+| -------- | -------- | -------- |
+| **1. 会话内压缩** | `test_generational.py` | 分代打分（衰减、clamp） |
+| | `test_100_rounds.py` | 101 轮集成：增量摘要、分代标注、容量阈值触发合并 |
+| | `test_e2e_cases.py`（Case 1、2） | 摘要 + 分代打分；容量触发合并 |
+| **2. 会话级记忆持久化** | `test_storage.py` | L0/L1/L2 存读、跨会话关键词检索（FTS5）、Checkpoint 写入/恢复/清理、会话过期 |
+| | `test_memory.py` | 会话中偏好检测（PreferenceDetector，零 LLM 成本） |
+| | `test_e2e_cases.py`（Case 3、4、5） | 偏好检测 + 持久化；Checkpoint 崩溃恢复；全链路（L0/L1/L2、跨会话检索） |
+| **3. 记忆蒸馏与长期学习** | `test_storage.py` | 偏好、经验、技能持久化 |
+| | `test_memory.py` | 生命周期：TTL 老化、记忆注入、token 上限 |
+| | `test_distillation.py` | 管道组件：TaskSchema、DistillationOutcome、TaskToolContext（任务、偏好） |
+| | `test_e2e_cases.py`（Case 5） | 新会话记忆注入 |
+
+### 端到端集成测试（5 Case）
+
+覆盖全部核心能力的端到端测试。需在 `.env` 中配置 LLM API Key：
+
+```bash
+cp .env.example .env   # 填入 CONTEXT_GC_API_KEY
+python3 tests/test_e2e_cases.py
+```
+
+| Case | 核心能力 | 说明 | 结果 |
+| ---- | -------- | ---- | ---- |
+| 1 | 会话内压缩 | 5 轮：摘要 + 分代打分 + get_messages | 5/5 ✓ |
+| 2 | 会话内压缩 | 10 轮、小容量：容量触发合并 | 4/4 ✓ |
+| 3 | 会话级持久化 | 5 轮含偏好表达：检测 → 持久化 → 加载 | 4/4 ✓ |
+| 4 | 会话级持久化 | 8 轮，第 5 轮后模拟崩溃：Checkpoint 恢复 | 4/5 ✓ |
+| 5 | 全链路 | 8 轮：会话 → L0/L1/L2 持久化 → 新会话加载 → 跨会话检索 → 记忆注入 | 17/17 ✓ |
+
+**总结**：34/35 检查通过 · 总耗时约 25s
+
+报告输出：`tests/output/e2e_test_report.txt`
+
+### 100 轮集成测试
+
+针对**会话内压缩**的端到端评测。需在 `.env` 中配置 LLM API Key：
+
+```bash
+cp .env.example .env   # 填入 CONTEXT_GC_API_KEY
 python3 -m pytest tests/test_100_rounds.py -v -s
 ```
 
 数据来源：`tests/data/dialogues.md`（101 轮 AI 教育主题对话，约 1.3 万 token）
-
-### 压缩效果（来自评估报告）
 
 | 指标 | 原文 | 压缩后 |
 |------|------|--------|
@@ -154,8 +211,6 @@ python3 -m pytest tests/test_100_rounds.py -v -s
 | 压缩比 | - | 约 73% |
 | 单轮摘要 | 101 次 | 102 次 |
 | 合并摘要 | - | 14 次 |
-
-### 摘要质量评估
 
 | 维度 | 评分 | 说明 |
 |------|------|------|
@@ -185,6 +240,7 @@ python3 -m pytest tests/test_100_rounds.py -v -s
 | 记忆生命周期（老化/淘汰/注入） | **已实现** | `memory/lifecycle.py`，TTL + 容量控制 |
 | 会话过期清理 | **已实现** | `storage/cleanup.py` |
 | 单元测试 | **已实现** | 26 个用例，覆盖持久化/检查点/偏好/分代/生命周期/蒸馏 |
+| 端到端集成测试 | **已实现** | 5 个 Case，34/35 通过 |
 
 ## 项目结构
 

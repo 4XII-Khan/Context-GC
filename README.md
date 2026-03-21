@@ -1,42 +1,38 @@
-<h1 align="center">Context GC</h1>
+<div align="center">
 
-<p align="center">
-  <strong>Compress → Persist → Distill → Inject. The complete context lifecycle for LLM agents.</strong>
-</p>
+<img src="assets/logo.png" alt="Context GC" width="120" style="border-radius: 50%;">
 
-<p align="center">
-  <a href="https://github.com/4XII-Khan/Context-GC/releases"><img src="https://img.shields.io/badge/release-v0.1.0-green.svg" alt="Release v0.1.0"></a>
-  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10+-blue.svg" alt="Python 3.10+"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-green.svg" alt="License"></a>
-  <a href="tests/"><img src="https://img.shields.io/badge/tests-26%20passed-brightgreen.svg" alt="Tests"></a>
-  <a href="#"><img src="https://img.shields.io/badge/dependencies-zero-orange.svg" alt="Zero Dependencies"></a>
-  <a href="https://github.com/4XII-Khan/Context-GC/commits/main"><img src="https://img.shields.io/github/last-commit/4XII-Khan/Context-GC?color=green" alt="Last Commit"></a>
-</p>
+# Context GC
 
-<p align="center">
-  <code>Python</code> · <code>AsyncIO</code> · <code>Zero Dependencies</code> · <code>Model-Agnostic</code> · <code>Pluggable Backend</code>
-</p>
+**Intelligent Context Management for LLM Agents**
 
-<p align="center">
-  📖 <a href="docs/design/memory-system.md"><strong>Design Doc</strong></a> ·
-  <a href="#quick-start"><strong>Quick Start</strong></a> ·
-  <a href="#core-capabilities"><strong>Key Features</strong></a> ·
-  <a href="#100-round-test--evaluation"><strong>Benchmarks</strong></a> ·
-  <a href="#documentation"><strong>Docs</strong></a>
-</p>
+*Compress · Persist · Distill · Inject — the complete lifecycle for production LLM applications*
 
-<p align="center">
-  🗜️ <strong>Generational Compression</strong> •
-  🧠 <strong>L0/L1/L2 Layered Memory</strong> •
-  🔬 <strong>Memory Distillation</strong><br>
-  ⚡ <strong>Zero-LLM Preference Detection</strong> •
-  🔄 <strong>Crash Recovery</strong> •
-  📚 <strong>Skill Learning</strong>
-</p>
+<br>
 
-<p align="center">
-  <b>English</b> | <a href="README.zh-CN.md">中文</a>
-</p>
+[![Release](https://img.shields.io/badge/release-v0.1.0-green.svg)](https://github.com/4XII-Khan/Context-GC/releases)
+[![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-26%20passed-brightgreen.svg)](tests/)
+[![Dependencies](https://img.shields.io/badge/dependencies-zero-orange.svg)](#)
+
+<br>
+
+<code>Python</code> · <code>AsyncIO</code> · <code>Model-Agnostic</code> · <code>Zero Dependencies</code> · <code>Pluggable Backend</code>
+
+<br>
+
+[Design Doc](docs/design/memory-system.md) · [Quick Start](#quick-start) · [Features](#core-capabilities) · [Benchmarks](#100-round-test--evaluation) · [Docs](#documentation)
+
+<br>
+
+**Generational Compression** · **L0/L1/L2 Memory** · **Distillation Pipeline** · **Crash Recovery** · **Skill Learning**
+
+<br>
+
+[English](README.md) · [中文](README.zh-CN.md)
+
+</div>
 
 ---
 
@@ -50,32 +46,49 @@ LLM context windows are finite, but conversations grow without bound. Existing s
 
 ### 1. In-Session Compression
 
-- **Incremental Summarization & Generational Tagging** — Each round produces a summary; historical rounds receive `gen_score` updates (with decay + clamp)
-- **Capacity-Triggered Merging** — When token usage hits preset thresholds (20%/30%/40%…), low-score rounds are merged with neighbors
-- **Step-Based Scoring** — Scores every N rounds instead of every round, reducing LLM call frequency
+Sustain long conversations within a fixed context window via **generational garbage collection** — semantically score rounds by relevance, retain high-value context, merge low-value history.
+
+| Capability | Description |
+| ---------- | ----------- |
+| **Incremental Summarization** | Each round produces a structured summary (theme, key points, conclusion); input = prior summaries + current round messages |
+| **Generational Scoring (`gen_score`)** | Relevance ranked per round: top 50% → old-generation (+1), bottom 50% → new-generation (−1); clamped ±1 per round for smooth decay |
+| **Capacity-Triggered Merging** | When token usage hits configurable thresholds (20%/30%/40%…), low-`gen_score` rounds are adjacent-merged via `merge_summary`; high-score rounds preserved |
+| **Step-Based Scoring** | Score every N rounds instead of every round; intermediate rounds reuse prior `gen_score` — reduces LLM calls for relevance |
+| **Automatic Pipeline** | Both summarization and merging run inside `close()`; host only pushes messages and calls `close()` per round |
 
 ### 2. Session-Level Memory Persistence
 
-- **L0/L1/L2 Layered Storage** — L0 (quick coarse filter, 50–200 tokens) → L1 (GC summary list) → L2 (raw conversation, on-demand)
-- **Checkpoint Crash Recovery** — Incremental checkpoint every N rounds; recovers from breakpoint after a crash
-- **In-Session Preference Detection** — Zero-LLM-cost keyword detection at `close()` time; explicit preferences written immediately
-- **Cross-Session Search** — FTS5 / BM25 keyword search, no embedding dependency
+Persist conversation state at session end into a **three-tier retrieval hierarchy**; enable cross-session search without vector DB.
+
+| Capability | Description |
+| ---------- | ----------- |
+| **L0 / L1 / L2 Layered Storage** | **L0** (~50–200 tokens): coarse summary of L1 for fast screening; **L1**: full GC summary list for detailed navigation; **L2**: raw conversation (on-demand load) |
+| **Checkpoint & Crash Recovery** | Incremental checkpoint every N rounds; process crash → resume from last checkpoint without data loss |
+| **In-Session Preference Detection** | At `close()`: zero-LLM-cost keyword/regex detection for explicit preferences; matches written immediately to user preferences |
+| **Cross-Session Keyword Search** | FTS5 / BM25 full-text search over L0/L1; no embeddings, no vector DB; filter sessions by user/agent |
 
 ### 3. Memory Distillation & Long-Term Learning
 
-- **Three-Stage Pipeline** — Task Agent → Distillation (success/failure analysis) → Write (preferences + experiences + personalized skills)
-- **Experience Deduplication & Conflict Resolution** — Task normalization, semantic dedup (exact / keyword_overlap / llm_similar), conflict strategies (append / newer_wins / keep_both / llm_merge)
-- **Memory Lifecycle** — TTL-based aging for preferences/experiences + injection capacity control
-- **Cost Budget** — Token budget cap for distillation pipeline; auto-skips low-priority tasks when exceeded
+Extract **user preferences**, **experiences**, and **personalized skills** from completed sessions via a configurable distillation pipeline.
+
+| Capability | Description |
+| ---------- | ----------- |
+| **Three-Stage Pipeline** | **Task Agent** → extracts tasks with success/failure labels; **Distiller** → analyzes outcomes; **Writers** → preferences, experiences, skill updates |
+| **User Preferences** | Writing style, coding habits, corrections, explicit preferences; stored per user; injected at session start |
+| **User Experience** | Task-scoped success patterns and failure anti-patterns; directory per task; used for decision optimization |
+| **Skills (Public & Private)** | Public: shared across users; Private: user-scoped; both updatable via distillation |
+| **Deduplication & Conflict** | Semantic dedup: `exact` / `keyword_overlap` / `llm_similar`; conflict strategies: `append` / `newer_wins` / `keep_both` / `llm_merge` |
+| **Memory Lifecycle** | TTL-based aging for preferences/experiences; `memory_inject_max_tokens` caps injection size |
+| **Cost Budget** | Token budget for distillation pipeline; low-priority tasks auto-skipped when exceeded |
 
 ### 4. Architecture
 
 | Property | Description |
 | -------- | ----------- |
-| **Pure Library** | Host injects callbacks; no mandatory service dependencies |
-| **Model-Agnostic** | `generate_summary`, `compute_relevance` callbacks are host-injected — swap any LLM |
-| **Pluggable Backend** | `MemoryBackend` protocol supports SQLite, filesystem, object storage, etc. |
-| **Zero Dependencies** | Core package uses Python standard library only |
+| **Pure Library** | Host injects callbacks; no mandatory services, runs in-process |
+| **Model-Agnostic** | `generate_summary`, `merge_summary`, `compute_relevance`, `estimate_tokens` are host-injected — use any LLM or heuristic |
+| **Pluggable Backend** | `MemoryBackend` protocol: SQLite, filesystem, object storage, etc. |
+| **Zero Dependencies** | Core uses Python standard library only; optional extras for dev/example |
 
 ---
 
@@ -149,7 +162,53 @@ See [`examples/context_gc_with_storage.py`](examples/context_gc_with_storage.py)
 
 ---
 
-## 📊 100-Round Test & Evaluation
+## 📊 Testing
+
+Tests are organized by core capability. Run all unit tests:
+
+```bash
+python3 -m pytest tests/ -v
+```
+
+### Coverage by Capability
+
+| Capability | Test File | Coverage |
+| ---------- | --------- | -------- |
+| **1. In-Session Compression** | `test_generational.py` | Generational scoring (decay, clamp) |
+| | `test_100_rounds.py` | 101-round integration: incremental summarization, generational tagging, capacity-triggered merging |
+| | `test_e2e_cases.py` (Case 1, 2) | Summarization + generational scoring; capacity-triggered merge |
+| **2. Session-Level Memory Persistence** | `test_storage.py` | L0/L1/L2 save/load, cross-session keyword search (FTS5), checkpoint write/recover/cleanup, session expiry |
+| | `test_memory.py` | In-session preference detection (PreferenceDetector, zero LLM cost) |
+| | `test_e2e_cases.py` (Case 3, 4, 5) | Preference detection + persistence; checkpoint crash recovery; full chain (L0/L1/L2, cross-session search) |
+| **3. Memory Distillation & Long-Term Learning** | `test_storage.py` | Preferences, experience, skills persistence |
+| | `test_memory.py` | Lifecycle: TTL aging, memory injection, token limit |
+| | `test_distillation.py` | Pipeline: TaskSchema, DistillationOutcome, TaskToolContext (tasks, preferences) |
+| | `test_e2e_cases.py` (Case 5) | Memory injection into new session |
+
+### E2E Integration Tests
+
+5 end-to-end cases covering all core capabilities. Requires LLM API key in `.env`:
+
+```bash
+cp .env.example .env   # Fill in CONTEXT_GC_API_KEY
+python3 tests/test_e2e_cases.py
+```
+
+| Case | Capability | Description | Result |
+| ---- | ---------- | ----------- | ------ |
+| 1 | In-Session Compression | 5 rounds: summarization + generational scoring + `get_messages` | 5/5 ✓ |
+| 2 | In-Session Compression | 10 rounds, small capacity: capacity-triggered merge | 4/4 ✓ |
+| 3 | Session-Level Persistence | 5 rounds with preference expressions: detect → persist → load | 4/4 ✓ |
+| 4 | Session-Level Persistence | 8 rounds, simulate crash at round 5: checkpoint recovery | 4/5 ✓ |
+| 5 | Full chain | 8 rounds: session → persist L0/L1/L2 → new session load → cross-session search → memory injection | 17/17 ✓ |
+
+**Summary:** 34/35 checks passed · ~25s total
+
+Report output: `tests/output/e2e_test_report.txt`
+
+### 100-Round Integration Test
+
+Benchmarks **In-Session Compression** end-to-end. Requires LLM API key in `.env`:
 
 ```bash
 cp .env.example .env   # Fill in CONTEXT_GC_API_KEY
@@ -158,8 +217,6 @@ python3 -m pytest tests/test_100_rounds.py -v -s
 
 Data source: `tests/data/dialogues.md` (101-round AI education dialogue, ~13k tokens)
 
-### Compression Results
-
 | Metric | Original | Compressed |
 | ------ | -------- | ---------- |
 | Rounds | 101 | 21 summaries |
@@ -167,8 +224,6 @@ Data source: `tests/data/dialogues.md` (101-round AI education dialogue, ~13k to
 | Compression ratio | — | **~73%** |
 | Single-round summaries | 101 | 102 |
 | Merge summaries | — | 14 |
-
-### Summary Quality
 
 | Dimension | Rating | Notes |
 | --------- | ------ | ----- |
@@ -192,6 +247,7 @@ Data source: `tests/data/dialogues.md` (101-round AI education dialogue, ~13k to
 | Memory lifecycle | ✅ Done | `memory/lifecycle.py`, TTL + capacity control |
 | Session expiry cleanup | ✅ Done | `storage/cleanup.py` |
 | Unit tests | ✅ Done | 26 cases |
+| E2E integration tests | ✅ Done | 5 cases, 34/35 passed |
 
 ---
 
