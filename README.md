@@ -5,10 +5,12 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/4XII-Khan/Context-GC/releases"><img src="https://img.shields.io/github/v/release/4XII-Khan/Context-GC?include_prereleases&label=release&color=green" alt="Release"></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10+-blue.svg" alt="Python 3.10+"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-green.svg" alt="License"></a>
   <a href="tests/"><img src="https://img.shields.io/badge/tests-26%20passed-brightgreen.svg" alt="Tests"></a>
   <a href="#"><img src="https://img.shields.io/badge/dependencies-zero-orange.svg" alt="Zero Dependencies"></a>
+  <a href="https://github.com/4XII-Khan/Context-GC/commits/main"><img src="https://img.shields.io/github/last-commit/4XII-Khan/Context-GC?color=green" alt="Last Commit"></a>
 </p>
 
 <p align="center">
