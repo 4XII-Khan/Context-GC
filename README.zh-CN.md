@@ -1,11 +1,42 @@
-[English](README.md) | **中文**
+<h1 align="center">Context GC</h1>
 
-# Context GC
+<p align="center">
+  <strong>压缩 → 持久化 → 蒸馏 → 注入，LLM Agent 的完整上下文生命周期管理。</strong>
+</p>
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE)
-[![Tests: pytest](https://img.shields.io/badge/tests-pytest-green.svg)](tests/)
-[![LLM](https://img.shields.io/badge/LLM-Context%20Management-orange.svg)](docs/design/context-compression.md)
+<p align="center">
+  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10+-blue.svg" alt="Python 3.10+"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-green.svg" alt="License"></a>
+  <a href="tests/"><img src="https://img.shields.io/badge/tests-26%20passed-brightgreen.svg" alt="Tests"></a>
+  <a href="#"><img src="https://img.shields.io/badge/dependencies-zero-orange.svg" alt="Zero Dependencies"></a>
+</p>
+
+<p align="center">
+  <code>Python</code> · <code>AsyncIO</code> · <code>零依赖</code> · <code>模型无关</code> · <code>后端可插拔</code>
+</p>
+
+<p align="center">
+  📖 <a href="docs/design/memory-system.md"><strong>设计文档</strong></a> ·
+  <a href="#快速开始"><strong>快速开始</strong></a> ·
+  <a href="#核心能力"><strong>核心能力</strong></a> ·
+  <a href="#100-轮测试与评估"><strong>评测</strong></a> ·
+  <a href="#设计文档"><strong>文档</strong></a>
+</p>
+
+<p align="center">
+  🗜️ <strong>分代压缩</strong> •
+  🧠 <strong>L0/L1/L2 分层记忆</strong> •
+  🔬 <strong>记忆蒸馏</strong><br>
+  ⚡ <strong>零 LLM 偏好检测</strong> •
+  🔄 <strong>崩溃恢复</strong> •
+  📚 <strong>技能学习</strong>
+</p>
+
+<p align="center">
+  <a href="README.md">English</a> | <b>中文</b>
+</p>
+
+---
 
 纯库形态、模型无关的对话上下文管理方案，适用于基于 LLM 的对话 / Agent 系统。会话内通过分代标注与容量触发合并实现可持续压缩；会话结束时将摘要映射为 L0/L1/L2 三层持久化，并通过蒸馏管道提取用户偏好、经验与私有化技能，形成"压缩 → 持久化 → 蒸馏 → 注入"的完整闭环。
 
