@@ -3,7 +3,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE)
 [![Tests: pytest](https://img.shields.io/badge/tests-pytest-green.svg)](tests/)
-[![LLM](https://img.shields.io/badge/LLM-Context%20Management-orange.svg)](docs/CONTEXT-COMPACTION-DESIGN.md)
+[![LLM](https://img.shields.io/badge/LLM-Context%20Management-orange.svg)](docs/上下文压缩设计.md)
 
 通用上下文管理方案，适用于基于 LLM 的对话 / Agent 系统。在每轮对话后持续进行摘要与分代标注，结合容量阈值触发二次摘要，实现有限窗口下的无限对话。
 
@@ -111,10 +111,17 @@ context-gc/
 │       ├── test_100_rounds_final_context.txt
 │       └── test_100_rounds_evaluation.md
 ├── docs/
-│   └── CONTEXT-COMPACTION-DESIGN.md  # 设计文档
+│   ├── 上下文压缩设计.md        # 会话内压缩设计
+│   └── 记忆系统设计.md         # L0/L1/L2、偏好、经验存储、蒸馏管道
 └── README.md
 ```
 
 ## 设计文档
 
-详见 [docs/CONTEXT-COMPACTION-DESIGN.md](docs/CONTEXT-COMPACTION-DESIGN.md)。
+- [上下文压缩设计](docs/上下文压缩设计.md) — 会话内压缩设计规范
+- [记忆系统设计](docs/记忆系统设计.md) — **最新方案**：L0/L1/L2 会话级存储、用户偏好、技能经验、蒸馏管道、Harness
+- [与ClaudeCode对比](docs/与ClaudeCode对比.md) — 与 Claude Code 上下文机制对比
+- [与OpenViking对比](docs/与OpenViking对比.md) — 与 OpenViking 对比
+- [与Sirchmunk对比](docs/与Sirchmunk对比.md) — 与 Sirchmunk 对比
+- [OpenViking与Sirchmunk对比](docs/OpenViking与Sirchmunk对比.md) — OpenViking 与 Sirchmunk 对比
+- [OpenViking复刻-无向量](docs/OpenViking复刻-无向量.md) — OpenViking 复刻指南（L0 改用非向量检索）
