@@ -72,7 +72,7 @@ Persist conversation state at session end into a **three-tier retrieval hierarch
 | ---------- | ----------- |
 | **L0 / L1 / L2 Layered Storage** | **L0** (~50–200 tokens): coarse summary of L1 for fast screening; **L1**: full GC summary list for detailed navigation; **L2**: raw conversation (on-demand load) |
 | **Checkpoint & Crash Recovery** | Incremental checkpoint every N rounds; process crash → resume from last checkpoint without data loss |
-| **In-Session Preference Detection** | At `close()`: zero-LLM-cost keyword/regex detection for explicit preferences; matches written immediately to user preferences |
+| **User preferences (distillation-only)** | No regex/rules in `close()`; preferences written only in `flush_distillation` (Task Agent / pipeline), with dedup on save |
 | **Cross-Session Keyword Search** | FTS5 / BM25 full-text search over L0/L1; no embeddings, no vector DB; filter sessions by user/agent |
 
 ### 3. Memory Distillation & Long-Term Learning
@@ -113,7 +113,7 @@ Extract **user preferences**, **experiences**, and **personalized skills** from 
 | 🎯 Context Quality | ❌ Loses old context | ⚠️ Equal compression | ⚠️ Retrieval noise | ✅ Generational — keeps what matters |
 | 🧠 Long-Term Learning | ❌ None | ❌ None | ❌ None | ✅ Distillation → preferences, experiences, skills |
 | 🔄 Crash Recovery | ❌ None | ❌ None | N/A | ✅ Checkpoint every N rounds |
-| ⚡ LLM Cost | None | High (every round) | Embedding cost | ✅ Step-based scoring, zero-LLM preference detection |
+| ⚡ LLM Cost | None | High (every round) | Embedding cost | ✅ Step-based scoring; preferences cost only in distillation |
 
 For in-depth comparison with **specific solutions** (Claude Code, OpenViking, MemGPT, etc.), see [Comparisons](docs/comparisons/claude-code.md) and the standalone docs in that directory.
 
@@ -207,7 +207,6 @@ sequenceDiagram
     participant ContextGC
     participant Compaction
     participant Checkpoint
-    participant PrefDetector
     participant Backend
     participant Distillation
 
@@ -220,12 +219,9 @@ sequenceDiagram
         ContextGC->>Compaction: merge_summary(low-score rounds)
     end
     ContextGC->>Checkpoint: on_round_close(state) [every N rounds]
-    ContextGC->>PrefDetector: detect(round_messages)
-    PrefDetector-->>ContextGC: preferences (rule-based, zero LLM)
     Note over Host,Distillation: === Session End (on_session_end) ===
     Host->>ContextGC: on_session_end(user_id, agent_id)
     ContextGC->>Backend: save_session(L0, L1, L2)
-    ContextGC->>Backend: save_user_preferences(detected) [with dedup]
     ContextGC->>Distillation: flush_distillation(messages)
     Distillation->>Distillation: Task Agent (extract tasks + preferences)
     Distillation->>Backend: save_user_preferences(pending) [with dedup]
@@ -263,7 +259,7 @@ sequenceDiagram
 | MemoryBackend + FileBackend | ✅ Done | `storage/backend.py` + `storage/file_backend.py` |
 | L0/L1/L2 layered storage | ✅ Done | Written at `on_session_end()` |
 | Checkpoint crash recovery | ✅ Done | `storage/checkpoint.py`, incremental every N rounds |
-| In-session preference detection | ✅ Done | `memory/preference.py`, zero LLM cost |
+| User preferences via distillation | ✅ Done | `distillation/flush.py` + Task Agent; no `close()` regex detection |
 | Cross-session keyword search | ✅ Done | FTS5/BM25, no vector DB |
 | Session expiry cleanup | ✅ Done | `storage/cleanup.py` |
 
@@ -280,13 +276,15 @@ sequenceDiagram
 
 | Module | Status | Details |
 | ------ | ------ | ------- |
-| Unit tests | ✅ Done | 28 cases |
+| Unit tests | ✅ Done | 30 cases |
 | E2E integration tests | ✅ Done | 7 cases, 52/53 passed |
 | 100-round integration test | ✅ Done | 101 rounds, 73% compression ratio |
 
 ---
 
 ## 📊 Testing
+
+**Manual test log** (data, results, time per run): [`docs/testing/TEST_RECORD.md`](docs/testing/TEST_RECORD.md)
 
 Tests are organized by core capability. Run all unit tests:
 
@@ -301,13 +299,15 @@ python3 -m pytest tests/ -v
 | **1. In-Session Compression** | `test_generational.py` | Generational scoring (decay, clamp) |
 | | `test_100_rounds.py` | 101-round integration: incremental summarization, generational tagging, capacity-triggered merging |
 | | `test_e2e_cases.py` (Case 1, 2) | Summarization + generational scoring; capacity-triggered merge |
+| | `test_e2e_asme.py` (ASME-1, 2) | **Real ASME logs**: in-session compression; capacity-triggered merge |
 | **2. Session-Level Memory Persistence** | `test_storage.py` | L0/L1/L2 save/load, cross-session keyword search (FTS5), checkpoint write/recover/cleanup, session expiry |
-| | `test_memory.py` | In-session preference detection (PreferenceDetector, zero LLM cost) |
+| | `test_memory.py` | Memory lifecycle + injection |
 | | `test_e2e_cases.py` (Case 3, 4, 5) | Preference detection + persistence; checkpoint crash recovery; full chain (L0/L1/L2, cross-session search) |
 | **3. Memory Distillation & Long-Term Learning** | `test_storage.py` | Preferences (incl. dedup), experience, skills persistence |
 | | `test_memory.py` | Lifecycle: TTL aging, memory injection, token limit |
 | | `test_distillation.py` | Pipeline: TaskSchema, DistillationOutcome, TaskToolContext (tasks, preferences) |
 | | `test_e2e_cases.py` (Case 5, 6, 7) | Full chain + distillation pipeline + experience/skill cross-session |
+| | `test_e2e_asme.py` (ASME-3) | **Real ASME logs**: full persistence chain + cross-session retrieval + injection |
 
 ### E2E Integration Tests
 
@@ -322,7 +322,7 @@ python3 tests/test_e2e_cases.py
 | ---- | ---------- | ----------- | ------ | ---- |
 | 1 | In-Session Compression | 5 rounds: summarization + generational scoring + `get_messages` | 5/5 ✓ | ~3s |
 | 2 | In-Session Compression | 10 rounds, small capacity: capacity-triggered merge | 4/4 ✓ | ~9s |
-| 3 | Session-Level Persistence | 5 rounds with preference expressions: detect → persist → load | 4/4 ✓ | ~1.4s |
+| 3 | Session-Level Persistence | 5 rounds: no `close()` pref rules; mock `flush_distillation` → persist → load | 4/4 ✓ | ~1.4s |
 | 4 | Session-Level Persistence | 8 rounds, simulate crash at round 5: checkpoint recovery | 4/5 ✓ | ~5s |
 | 5 | Full chain | 8 rounds: session → persist L0/L1/L2 → new session load → cross-session search → memory injection | 17/17 ✓ | ~6s |
 | 6 | **Distillation Pipeline** | 10 rounds: Task Agent → distill → experience write → skill learning | 9/9 ✓ | ~19s |
@@ -331,6 +331,29 @@ python3 tests/test_e2e_cases.py
 **Summary:** 52/53 checks passed · ~45s total
 
 Report output: `tests/output/YYYY-MM-DD/e2e_test_report.txt` (date-based directory)
+
+### ASME Agent Dialogue E2E Evaluation
+
+Deep evaluation using **real ASME personal-assistant** session logs. Uses `tests/data/chatme_*.json` to validate Context GC under realistic agent traffic.
+
+```bash
+cp .env.example .env   # Set CONTEXT_GC_API_KEY
+python3 tests/test_e2e_asme.py
+# or
+python3 -m pytest tests/test_e2e_asme.py -v -s
+```
+
+| Case | Capability | Description |
+| ---- | ---------- | ----------- |
+| ASME-1 | In-session compression | Real multi-turn ASME dialogue → summaries + generational scoring + `get_messages` |
+| ASME-2 | Capacity-triggered merge | Long real dialogue + small capacity → merged summaries |
+| ASME-3 | Full chain | Persist → new session load → cross-session search → memory injection |
+
+Data source: `tests/data/chatme_*.json` (ASME `chatme_session_v1` format)
+
+**Output layout:** `tests/output/YYYY-MM-DD/asme_e2e/`. In **scenario A** (one chatme file = one session, different `session_id`), all files share a single FileBackend root at **`shared_data/`** (`sessions/`, `user/`, etc.). Per-file artifacts are under **`per_session/<session>/`** (`report.txt`, `stages.json`; see **`README.txt`** there for the shared-root pointer). **Scenario B** (all chatme merged into one session) uses a separate tree: **`merged_session/data/`**. See design doc **Section 12 → Scenario 6**: `docs/design/memory-system.md`.
+
+**Summary table:** `asme_e2e/summary_table.txt`
 
 ### 100-Round Integration Test
 
@@ -377,15 +400,17 @@ context-gc/
 │   │   ├── checkpoint.py    # Crash recovery
 │   │   └── cleanup.py       # Session expiry
 │   ├── memory/              # Memory management
-│   │   ├── preference.py    # Zero-LLM preference detection
 │   │   └── lifecycle.py     # Aging / eviction / injection
 │   └── distillation/        # Distillation pipeline
 │       ├── flush.py         # Pipeline entry point
 │       ├── task_agent.py    # Task extraction
 │       ├── distiller.py     # Success/failure analysis
 │       ├── skill_learner.py # Skill updates
-│       └── experience_writer.py
-├── tests/                   # 28 unit tests + E2E (7 cases) + 100-round
+│       ├── experience_writer.py
+│       └── task_assignment_llm.py  # Optional LLM task bucket for experiences
+├── tests/                   # Unit tests + E2E (7 cases) + ASME chatme E2E + 100-round
+│   ├── test_e2e_cases.py    # E2E integration (7 cases)
+│   └── test_e2e_asme.py     # ASME chatme-session E2E evaluation
 ├── examples/                # Full working example
 └── docs/
     ├── design/              # Architecture & design specs
@@ -395,6 +420,10 @@ context-gc/
 ---
 
 ## 📖 Documentation
+
+**Configuration**
+
+- [Configuration & env vars](docs/configuration.md) — `with_env_defaults`, distillation env vars, presets, `create_with_file_backend`, memory injection
 
 **Design**
 

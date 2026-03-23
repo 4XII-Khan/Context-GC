@@ -7,10 +7,12 @@ context_gc.distillation — 记忆蒸馏管道。
 
 from .models import TaskSchema, TaskStatus, DistillationOutcome
 from .flush import flush_distillation
+from .task_assignment_llm import assign_experience_task_descs_with_llm
 
 __all__ = [
     "TaskSchema",
     "TaskStatus",
     "DistillationOutcome",
     "flush_distillation",
+    "assign_experience_task_descs_with_llm",
 ]

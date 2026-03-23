@@ -1,6 +1,8 @@
 """Tests for context_gc.storage: FileBackend + CheckpointManager."""
 
+import json
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -50,10 +52,41 @@ class TestFileBackend:
 
         loaded = await backend.load_user_preferences("u1")
         assert len(loaded) == 2
+        assert loaded[0].source_session == "s1"
+
+        pref_md = tmp_dir / "user" / "u1" / "preferences" / "preferences.md"
+        assert pref_md.exists()
+        assert "(session:" not in pref_md.read_text(encoding="utf-8")
+        idx = tmp_dir / "user" / "u1" / "preferences" / ".preference_index.json"
+        assert idx.exists()
+        raw = json.loads(idx.read_text(encoding="utf-8"))
+        assert len(raw) == 2
+        assert all("source_session" in r and "id" in r for r in raw)
 
         loaded_filtered = await backend.load_user_preferences("u1", "writing_style")
         assert len(loaded_filtered) == 1
         assert loaded_filtered[0].l0 == "concise replies"
+
+    @pytest.mark.asyncio
+    async def test_preferences_migrate_legacy_flat_file(self, tmp_dir):
+        """旧版 user/u1/preferences.md 自动迁入 preferences/ 并生成索引。"""
+        udir = tmp_dir / "user" / "u1"
+        udir.mkdir(parents=True)
+        legacy = udir / "preferences.md"
+        legacy.write_text(
+            "# 用户偏好\n\n"
+            "- [explicit_prefs] 喜简洁 (session:s_old, 2026-01-01T00:00:00+00:00)\n",
+            encoding="utf-8",
+        )
+        backend = FileBackend(tmp_dir)
+        loaded = await backend.load_user_preferences("u1")
+        assert len(loaded) == 1
+        assert loaded[0].l0 == "喜简洁"
+        assert loaded[0].source_session == "s_old"
+        assert not legacy.exists()
+        assert (udir / "preferences.md.legacy.bak").exists()
+        md = (udir / "preferences" / "preferences.md").read_text(encoding="utf-8")
+        assert "session:" not in md
 
     @pytest.mark.asyncio
     async def test_preference_dedup_exact(self, tmp_dir):
@@ -111,6 +144,14 @@ class TestFileBackend:
         assert len([e for e in loaded if e.success]) == 1
         assert len([e for e in loaded if not e.success]) == 1
 
+        idx_path = tmp_dir / "user" / "u1" / "experience" / ".task_index.json"
+        idx = json.loads(idx_path.read_text(encoding="utf-8"))
+        assert len(idx) == 1
+        assert idx[0]["slug"] == "implement_login"
+        assert idx[0]["created_at"]
+        assert idx[0]["updated_at"]
+        assert idx[0]["created_at"] <= idx[0]["updated_at"]
+
     @pytest.mark.asyncio
     async def test_skills(self, tmp_dir):
         backend = FileBackend(tmp_dir)
@@ -119,6 +160,50 @@ class TestFileBackend:
         skills = await backend.load_user_skills("u1")
         assert len(skills) == 1
         assert skills[0]["name"] == "api-design"
+        assert skills[0].get("created_at")
+        assert skills[0].get("updated_at")
+        assert skills[0]["created_at"] == skills[0]["updated_at"]
+        meta_path = tmp_dir / "user" / "u1" / "skills" / "api-design" / ".meta.json"
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        assert meta["created_at"] == meta["updated_at"]
+
+    @pytest.mark.asyncio
+    async def test_skill_meta_created_stable_updated_changes(self, tmp_dir):
+        backend = FileBackend(tmp_dir)
+        body = '---\nname: "x"\ndescription: "d"\n---\n'
+        await backend.save_user_skill("u1", "x", body + "v1")
+        skills1 = await backend.load_user_skills("u1")
+        c1 = skills1[0]["created_at"]
+        u1 = skills1[0]["updated_at"]
+        time.sleep(1.1)
+        await backend.save_user_skill("u1", "x", body + "v2")
+        skills2 = await backend.load_user_skills("u1")
+        assert skills2[0]["created_at"] == c1
+        assert skills2[0]["updated_at"] > u1
+
+    @pytest.mark.asyncio
+    async def test_task_index_backfills_timestamps_for_legacy_entries(self, tmp_dir):
+        backend = FileBackend(tmp_dir)
+        exp_dir = tmp_dir / "user" / "u1" / "experience"
+        exp_dir.mkdir(parents=True)
+        legacy = [
+            {
+                "slug": "old_task",
+                "canonical_desc": "old task",
+                "alt_descs": [],
+            }
+        ]
+        (exp_dir / ".task_index.json").write_text(
+            json.dumps(legacy, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        await backend.save_user_experience(
+            "u1",
+            [UserExperience(task_desc="old task", success=True, content="e1")],
+            "s1",
+        )
+        idx = json.loads((exp_dir / ".task_index.json").read_text(encoding="utf-8"))
+        assert idx[0]["created_at"]
+        assert idx[0]["updated_at"]
 
     @pytest.mark.asyncio
     async def test_delete_session(self, tmp_dir):

@@ -19,7 +19,7 @@ TASK_TOOL_SCHEMAS = [
             "description": "Report your thinking before taking actions",
             "parameters": {
                 "type": "object",
-                "properties": {"thinking": {"type": "string", "description": "Your thinking process"}},
+                "properties": {"thinking": {"type": "string", "description": "思考过程，简体中文"}},
                 "required": ["thinking"],
             },
         },
@@ -28,13 +28,13 @@ TASK_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "insert_task",
-            "description": "Insert a new task after the specified order. Each task = one user intent/goal.",
+            "description": "Insert a new task after the specified order. Each task = one user intent/goal. Use Simplified Chinese (简体中文) for natural-language fields.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "after_task_order": {"type": "integer", "description": "Insert after this order (0 = at beginning)"},
-                    "task_description": {"type": "string", "description": "The user's request verbatim or closely paraphrased"},
-                    "task_steps": {"type": "array", "items": {"type": "string"}, "description": "Optional execution steps"},
+                    "task_description": {"type": "string", "description": "用户意图，简体中文"},
+                    "task_steps": {"type": "array", "items": {"type": "string", "description": "简体中文"}, "description": "Optional execution steps"},
                 },
                 "required": ["after_task_order", "task_description"],
             },
@@ -44,13 +44,13 @@ TASK_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "update_task",
-            "description": "Update a task's status and/or description",
+            "description": "Update a task's status and/or description. task_description in Simplified Chinese (简体中文) when set.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "task_order": {"type": "integer"},
                     "task_status": {"type": "string", "enum": ["pending", "running", "success", "failed"]},
-                    "task_description": {"type": "string"},
+                    "task_description": {"type": "string", "description": "若填写则为简体中文"},
                 },
                 "required": ["task_order"],
             },
@@ -60,7 +60,7 @@ TASK_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "append_messages_to_task",
-            "description": "Link a range of message IDs to a task. Auto-sets status to running.",
+            "description": "Optional legacy: link message index range to a task. Distillation uses full session messages; you usually do NOT need this.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -101,7 +101,7 @@ TASK_TOOL_SCHEMAS = [
                 "type": "object",
                 "properties": {
                     "task_order": {"type": "integer"},
-                    "progress": {"type": "string", "description": "Specific progress description"},
+                    "progress": {"type": "string", "description": "进度说明，简体中文"},
                 },
                 "required": ["task_order", "progress"],
             },
@@ -111,11 +111,11 @@ TASK_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "submit_user_preference",
-            "description": "Submit a user preference or fact (third-person, task-independent)",
+            "description": "Submit a user preference or fact (third-person, task-independent). Text must be Simplified Chinese (简体中文).",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "preference": {"type": "string", "description": "e.g. 'The user prefers TypeScript'"},
+                    "preference": {"type": "string", "description": "第三人称偏好或事实，简体中文，例如「用户偏好使用 TypeScript」"},
                 },
                 "required": ["preference"],
             },

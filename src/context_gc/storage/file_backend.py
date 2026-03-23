@@ -16,17 +16,22 @@ context_gc/storage/file_backend.py
     │   └── {skill_name}/SKILL.md
     └── user/
         └── {user_id}/
-            ├── preferences.md
+            ├── preferences/
+            │   ├── preferences.md          # 注入用正文，不含来源
+            │   └── .preference_index.json  # 元数据：来源会话、时间等
             ├── skills/
-            │   └── {skill_name}/SKILL.md
+            │   └── {skill_name}/
+            │           ├── .meta.json   # created_at / updated_at（程序写入）
+            │           └── SKILL.md
             └── experience/
-                ├── .task_index.json
+                ├── .task_index.json     # 每条任务含 created_at / updated_at
                 └── {task_slug}/
                     └── .overview.md
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -40,6 +45,11 @@ from .backend import (
     UserExperience,
     SessionRecord,
 )
+
+
+def _utc_now_iso() -> str:
+    """UTC ISO-8601 秒精度，与 UserPreference.updated_at 一致。"""
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def _safe_slug(text: str, max_len: int = 60) -> str:
@@ -77,6 +87,82 @@ def _pref_matches(
     if strategy == "keyword_overlap":
         return _keyword_overlap(l0_a, l0_b, threshold)
     return False
+
+
+def _preference_stable_id(category: str, l0: str) -> str:
+    """偏好条目稳定 id（用于索引与去重定位）。"""
+    key = f"{category}\x1f{_normalize_l0(l0)}"
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+
+
+def _parse_preferences_line_legacy(line: str) -> tuple[str, str, str | None, str, str] | None:
+    """
+    解析旧版 ``preferences.md`` 行（含 session 后缀）。
+    返回 (category, l0, l1, source_session, updated_at) 或 None。
+    """
+    line = line.strip()
+    if not line.startswith("- ["):
+        return None
+    m = re.match(
+        r"- \[(\w+)\]\s*(.+?)(?:\s*\(session:(\S+),\s*(\S+)\))?$",
+        line,
+    )
+    if not m:
+        return None
+    cat, content, src_session, updated = m.group(1), m.group(2), m.group(3), m.group(4)
+    parts = content.split("：", 1)
+    l0 = parts[0].strip()
+    l1 = parts[1].strip() if len(parts) > 1 else None
+    return cat, l0, l1, src_session or "", updated or ""
+
+
+def _parse_preferences_line_clean(line: str) -> tuple[str, str, str | None] | None:
+    """解析新版正文行（无来源后缀）。"""
+    line = line.strip()
+    if not line.startswith("- ["):
+        return None
+    m = re.match(r"- \[(\w+)\]\s*(.+)$", line)
+    if not m:
+        return None
+    cat, content = m.group(1), m.group(2).strip()
+    parts = content.split("：", 1)
+    l0 = parts[0].strip()
+    l1 = parts[1].strip() if len(parts) > 1 else None
+    return cat, l0, l1
+
+
+def _preference_entry_from_parts(
+    *,
+    category: str,
+    l0: str,
+    l1: str | None,
+    source_session: str,
+    updated_at: str,
+    created_at: str | None = None,
+    pref_id: str | None = None,
+) -> dict:
+    now = updated_at or _utc_now_iso()
+    pid = pref_id or _preference_stable_id(category, l0)
+    return {
+        "id": pid,
+        "category": category,
+        "l0": l0,
+        "l1": l1 or "",
+        "source_session": source_session or "",
+        "updated_at": now,
+        "created_at": created_at or now,
+    }
+
+
+def _render_preferences_markdown(entries: list[dict]) -> str:
+    lines = ["# 用户偏好", ""]
+    for e in entries:
+        row = f"- [{e['category']}] {e['l0']}"
+        if (e.get("l1") or "").strip():
+            row += f"：{e['l1'].strip()}"
+        lines.append(row)
+    lines.append("")
+    return "\n".join(lines)
 
 
 class FileBackend:
@@ -199,8 +285,146 @@ class FileBackend:
         return expired
 
     # ------------------------------------------------------------------
-    # 偏好
+    # 偏好（preferences/ 目录 + .preference_index.json 元数据；正文不含来源）
     # ------------------------------------------------------------------
+
+    def _preferences_dir(self, user_id: str) -> Path:
+        return self.data_dir / "user" / user_id / "preferences"
+
+    def _migrate_legacy_user_preferences_file(self, user_id: str) -> None:
+        """
+        将旧版 ``user/{id}/preferences.md`` 迁入 ``preferences/`` 并生成索引后，
+        将旧文件重命名为 ``preferences.md.legacy.bak``。
+        """
+        ur = self.data_dir / "user" / user_id
+        legacy = ur / "preferences.md"
+        if not legacy.exists():
+            return
+        pdir = self._preferences_dir(user_id)
+        idx_path = pdir / ".preference_index.json"
+        if idx_path.exists():
+            return
+        pdir.mkdir(parents=True, exist_ok=True)
+        text = legacy.read_text(encoding="utf-8")
+        entries: list[dict] = []
+        for line in text.splitlines():
+            parsed = _parse_preferences_line_legacy(line)
+            if not parsed:
+                continue
+            cat, l0, l1, src, upd = parsed
+            ts = upd or _utc_now_iso()
+            entries.append(
+                _preference_entry_from_parts(
+                    category=cat,
+                    l0=l0,
+                    l1=l1,
+                    source_session=src or "",
+                    updated_at=ts,
+                    created_at=ts,
+                )
+            )
+        if entries:
+            self._atomic_write_preference_index(idx_path, entries)
+            (pdir / "preferences.md").write_text(
+                _render_preferences_markdown(entries), encoding="utf-8"
+            )
+            try:
+                legacy.rename(ur / "preferences.md.legacy.bak")
+            except OSError:
+                legacy.unlink(missing_ok=True)
+            return
+        # 无有效条目：若旧文件几乎为空则删除，避免反复尝试迁移
+        body = "\n".join(
+            ln for ln in text.splitlines()
+            if ln.strip() and not ln.strip().startswith("#")
+        )
+        if not body.strip():
+            try:
+                legacy.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    def _atomic_write_preference_index(self, idx_path: Path, entries: list[dict]) -> None:
+        idx_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = idx_path.with_suffix(".json.tmp")
+        tmp.write_text(
+            json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        os.replace(str(tmp), str(idx_path))
+
+    def _rebuild_index_from_clean_markdown(self, user_id: str) -> list[dict]:
+        """仅有 preferences.md、无索引时，从正文反建索引（来源字段为空）。"""
+        pdir = self._preferences_dir(user_id)
+        md_path = pdir / "preferences.md"
+        if not md_path.exists():
+            return []
+        entries: list[dict] = []
+        for line in md_path.read_text(encoding="utf-8").splitlines():
+            pc = _parse_preferences_line_clean(line)
+            if not pc:
+                continue
+            cat, l0, l1 = pc
+            now = _utc_now_iso()
+            entries.append(
+                _preference_entry_from_parts(
+                    category=cat,
+                    l0=l0,
+                    l1=l1,
+                    source_session="",
+                    updated_at=now,
+                    created_at=now,
+                )
+            )
+        return entries
+
+    def _read_preference_entries(self, user_id: str) -> list[dict]:
+        self._migrate_legacy_user_preferences_file(user_id)
+        pdir = self._preferences_dir(user_id)
+        idx_path = pdir / ".preference_index.json"
+        if idx_path.exists():
+            try:
+                data = json.loads(idx_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                data = []
+            if isinstance(data, list):
+                out = [e for e in data if isinstance(e, dict) and str(e.get("l0", "")).strip()]
+                return out
+        entries = self._rebuild_index_from_clean_markdown(user_id)
+        if entries:
+            self._atomic_write_preference_index(idx_path, entries)
+        return entries
+
+    def _write_preference_bundle(self, user_id: str, entries: list[dict]) -> None:
+        ur = self.data_dir / "user" / user_id
+        ur.mkdir(parents=True, exist_ok=True)
+        pdir = self._preferences_dir(user_id)
+        pdir.mkdir(parents=True, exist_ok=True)
+        idx_path = pdir / ".preference_index.json"
+        self._atomic_write_preference_index(idx_path, entries)
+        (pdir / "preferences.md").write_text(
+            _render_preferences_markdown(entries), encoding="utf-8"
+        )
+
+    def _entries_to_user_preferences(
+        self, user_id: str, entries: list[dict], category: str | None
+    ) -> list[UserPreference]:
+        results: list[UserPreference] = []
+        for e in entries:
+            cat = str(e.get("category", ""))
+            if category and cat != category:
+                continue
+            l1 = (e.get("l1") or "").strip() or None
+            results.append(
+                UserPreference(
+                    user_id=user_id,
+                    category=cat,
+                    l0=str(e.get("l0", "")).strip(),
+                    l1=l1,
+                    source_session=str(e.get("source_session", "") or "") or None,
+                    updated_at=str(e.get("updated_at", "") or ""),
+                )
+            )
+        return results
 
     async def save_user_preferences(
         self,
@@ -214,6 +438,9 @@ class FileBackend:
         """
         保存用户偏好，写入前去重。
 
+        落盘：``user/{id}/preferences/.preference_index.json``（含来源会话、时间）+
+        ``user/{id}/preferences/preferences.md``（仅 category/l0/l1，**不含来源**）。
+
         去重策略：
         - exact: l0 完全一致则视为重复
         - keyword_overlap: 关键词重叠率 > threshold 视为重复（中英文分词）
@@ -221,86 +448,48 @@ class FileBackend:
         if not prefs:
             return
 
-        d = self.data_dir / "user" / user_id
-        d.mkdir(parents=True, exist_ok=True)
-        p = d / "preferences.md"
-
-        existing_prefs: list[UserPreference] = await self.load_user_preferences(
-            user_id, category=None
-        )
-        existing_l0s: list[str] = [e.l0 for e in existing_prefs]
-
-        def _is_duplicate(new_l0: str, against: list[str]) -> bool:
-            for l0 in against:
-                if dedup_strategy == "exact":
-                    if _normalize_l0(new_l0) == _normalize_l0(l0):
-                        return True
-                elif dedup_strategy == "keyword_overlap":
-                    if _keyword_overlap(new_l0, l0, dedup_threshold):
-                        return True
-            return False
-
-        to_append: list[UserPreference] = []
+        entries = list(self._read_preference_entries(user_id))
         modified = False
+
         for pref in prefs:
-            against = existing_l0s + [p.l0 for p in to_append]
-            if _is_duplicate(pref.l0, against):
-                for e in existing_prefs:
-                    if _pref_matches(pref.l0, e.l0, dedup_strategy, dedup_threshold):
-                        e.updated_at = pref.updated_at or datetime.now(
-                            timezone.utc
-                        ).isoformat(timespec="seconds")
-                        e.source_session = session_id or e.source_session
-                        modified = True
-                        break
+            matched_j: int | None = None
+            for j, e in enumerate(entries):
+                if _pref_matches(
+                    pref.l0, str(e.get("l0", "")),
+                    dedup_strategy, dedup_threshold,
+                ):
+                    matched_j = j
+                    break
+            if matched_j is not None:
+                now = pref.updated_at or _utc_now_iso()
+                entries[matched_j]["updated_at"] = now
+                entries[matched_j]["source_session"] = (
+                    session_id or entries[matched_j].get("source_session") or ""
+                )
+                modified = True
                 continue
-            to_append.append(pref)
-            existing_l0s.append(pref.l0)
+            now = pref.updated_at or _utc_now_iso()
+            entries.append(
+                _preference_entry_from_parts(
+                    category=pref.category,
+                    l0=pref.l0,
+                    l1=pref.l1,
+                    source_session=session_id or "",
+                    updated_at=now,
+                    created_at=now,
+                )
+            )
+            modified = True
 
-        if not to_append and not modified:
+        if not modified:
             return
-
-        lines: list[str] = []
-        for pref in existing_prefs + to_append:
-            entry = f"- [{pref.category}] {pref.l0}"
-            if pref.l1:
-                entry += f"：{pref.l1}"
-            entry += f" (session:{pref.source_session or session_id}, {pref.updated_at})"
-            lines.append(entry)
-
-        combined = "# 用户偏好\n\n" + "\n".join(lines) + "\n"
-        p.write_text(combined, encoding="utf-8")
+        self._write_preference_bundle(user_id, entries)
 
     async def load_user_preferences(
         self, user_id: str, category: str | None = None
     ) -> list[UserPreference]:
-        p = self.data_dir / "user" / user_id / "preferences.md"
-        if not p.exists():
-            return []
-        text = p.read_text(encoding="utf-8")
-        results: list[UserPreference] = []
-        for line in text.splitlines():
-            line = line.strip()
-            if not line.startswith("- ["):
-                continue
-            m = re.match(r"- \[(\w+)\]\s*(.+?)(?:\s*\(session:(\S+),\s*(\S+)\))?$", line)
-            if not m:
-                continue
-            cat, content, src_session, updated = m.group(1), m.group(2), m.group(3), m.group(4)
-            if category and cat != category:
-                continue
-            parts = content.split("：", 1)
-            l0 = parts[0].strip()
-            l1 = parts[1].strip() if len(parts) > 1 else None
-            results.append(UserPreference(
-                user_id=user_id,
-                category=cat,
-                l0=l0,
-                l1=l1,
-                source_session=src_session or "",
-                updated_at=updated or "",
-            ))
-        return results
+        entries = self._read_preference_entries(user_id)
+        return self._entries_to_user_preferences(user_id, entries, category)
 
     # ------------------------------------------------------------------
     # 公共技能
@@ -331,6 +520,24 @@ class FileBackend:
     ) -> None:
         d = self.data_dir / "user" / user_id / "skills" / skill_name
         d.mkdir(parents=True, exist_ok=True)
+        meta_path = d / ".meta.json"
+        now = _utc_now_iso()
+        if meta_path.exists():
+            try:
+                old = json.loads(meta_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                old = {}
+            if not isinstance(old, dict):
+                old = {}
+            created = (old.get("created_at") or "").strip() or now
+            meta_obj = {"created_at": created, "updated_at": now}
+        else:
+            meta_obj = {"created_at": now, "updated_at": now}
+        tmp_meta = meta_path.with_suffix(".tmp")
+        tmp_meta.write_text(
+            json.dumps(meta_obj, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        os.replace(str(tmp_meta), str(meta_path))
         (d / "SKILL.md").write_text(content, encoding="utf-8")
 
     def _scan_skills_dir(
@@ -353,12 +560,24 @@ class FileBackend:
                     desc = line.split(":", 1)[1].strip().strip('"')
                 if line.startswith("name:"):
                     name_from_fm = line.split(":", 1)[1].strip().strip('"')
-            results.append({
+            item: dict = {
                 "name": name_from_fm,
                 "description": desc,
                 "path": str(skill_file),
                 "content": content,
-            })
+            }
+            meta_path = sd / ".meta.json"
+            if meta_path.exists():
+                try:
+                    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                    if isinstance(meta, dict):
+                        if meta.get("created_at"):
+                            item["created_at"] = meta["created_at"]
+                        if meta.get("updated_at"):
+                            item["updated_at"] = meta["updated_at"]
+                except (json.JSONDecodeError, OSError):
+                    pass
+            results.append(item)
         return results
 
     # ------------------------------------------------------------------
@@ -370,6 +589,8 @@ class FileBackend:
         user_id: str,
         experiences: list[UserExperience],
         session_id: str,
+        *,
+        use_fuzzy_task_match: bool = True,
     ) -> None:
         exp_dir = self.data_dir / "user" / user_id / "experience"
         exp_dir.mkdir(parents=True, exist_ok=True)
@@ -378,7 +599,10 @@ class FileBackend:
         index = self._load_task_index(index_path)
 
         for exp in experiences:
-            slug = self._get_or_create_task_slug(index, exp.task_desc)
+            slug = self._get_or_create_task_slug(
+                index, exp.task_desc, fuzzy=use_fuzzy_task_match
+            )
+            self._touch_task_index_entry(index, slug)
             task_dir = exp_dir / slug
             task_dir.mkdir(parents=True, exist_ok=True)
             overview_path = task_dir / ".overview.md"
@@ -415,7 +639,11 @@ class FileBackend:
         self._save_task_index(index_path, index)
 
     async def load_user_experience(
-        self, user_id: str, task_desc: str | None = None
+        self,
+        user_id: str,
+        task_desc: str | None = None,
+        *,
+        use_fuzzy_task_match: bool = True,
     ) -> list[UserExperience]:
         exp_dir = self.data_dir / "user" / user_id / "experience"
         if not exp_dir.exists():
@@ -426,7 +654,9 @@ class FileBackend:
 
         dirs_to_scan: list[tuple[str, Path]] = []
         if task_desc:
-            slug = self._find_task_slug(index, task_desc)
+            slug = self._find_task_slug(
+                index, task_desc, fuzzy=use_fuzzy_task_match
+            )
             if slug:
                 dirs_to_scan.append((task_desc, exp_dir / slug))
         else:
@@ -469,6 +699,13 @@ class FileBackend:
                 ))
         return results
 
+    async def load_user_experience_task_index(self, user_id: str) -> list[dict]:
+        exp_dir = self.data_dir / "user" / user_id / "experience"
+        if not exp_dir.exists():
+            return []
+        index_path = exp_dir / ".task_index.json"
+        return self._load_task_index(index_path)
+
     # --- task index helpers ---
 
     @staticmethod
@@ -483,10 +720,23 @@ class FileBackend:
         tmp.write_text(json.dumps(index, ensure_ascii=False, indent=2), encoding="utf-8")
         os.replace(str(tmp), str(path))
 
+    @staticmethod
+    def _touch_task_index_entry(index: list[dict], slug: str) -> None:
+        """本条任务在经验写入时被触碰：刷新 updated_at，并补全旧数据的 created_at。"""
+        now = _utc_now_iso()
+        for entry in index:
+            if entry.get("slug") != slug:
+                continue
+            if "created_at" not in entry or not (entry.get("created_at") or "").strip():
+                fallback = (entry.get("updated_at") or "").strip() or now
+                entry["created_at"] = fallback
+            entry["updated_at"] = now
+            return
+
     def _get_or_create_task_slug(
-        self, index: list[dict], task_desc: str
+        self, index: list[dict], task_desc: str, *, fuzzy: bool = True
     ) -> str:
-        existing = self._find_task_slug(index, task_desc)
+        existing = self._find_task_slug(index, task_desc, fuzzy=fuzzy)
         if existing:
             for entry in index:
                 if entry["slug"] == existing:
@@ -495,15 +745,20 @@ class FileBackend:
                     break
             return existing
         slug = _safe_slug(task_desc)
+        now = _utc_now_iso()
         index.append({
             "slug": slug,
             "canonical_desc": task_desc,
             "alt_descs": [],
+            "created_at": now,
+            "updated_at": now,
         })
         return slug
 
     @staticmethod
-    def _find_task_slug(index: list[dict], task_desc: str) -> str | None:
+    def _find_task_slug(
+        index: list[dict], task_desc: str, *, fuzzy: bool = True
+    ) -> str | None:
         desc_lower = task_desc.lower()
         for entry in index:
             if entry["canonical_desc"].lower() == desc_lower:
@@ -511,6 +766,8 @@ class FileBackend:
             for alt in entry.get("alt_descs", []):
                 if alt.lower() == desc_lower:
                     return entry["slug"]
+        if not fuzzy:
+            return None
         kws = set(re.findall(r"[\w\u4e00-\u9fff]+", desc_lower))
         if not kws:
             return None

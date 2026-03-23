@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
@@ -32,7 +33,11 @@ def get_user_learn_lock(user_id: str) -> threading.Lock:
 
 
 def scan_skills_dir(skills_dir: str | Path) -> list[dict]:
-    """扫描技能目录，返回 [{name, description, dir_name, path}]。"""
+    """扫描技能目录，返回 [{display_name, description, dir_name, path, session_id?, last_session_id?}]。
+
+    ``display_name`` 来自 SKILL 前置 ``name:``（多为中文展示名）；``dir_name`` 为磁盘目录名（kebab-case 等），
+    供 get_skill / str_replace 等工具的 ``skill_name`` 参数使用。
+    """
     d = Path(skills_dir)
     if not d.exists():
         return []
@@ -43,19 +48,49 @@ def scan_skills_dir(skills_dir: str | Path) -> list[dict]:
         skill_file = sd / "SKILL.md"
         if not skill_file.exists():
             continue
+        meta: dict = {}
+        meta_path = sd / ".meta.json"
+        if meta_path.exists():
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                meta = {}
         content = skill_file.read_text(encoding="utf-8")
-        name = sd.name
+        display_name = sd.name
         desc = ""
+        in_desc_block = False
+        desc_lines: list[str] = []
         for line in content.splitlines():
             if line.startswith("name:"):
-                name = line.split(":", 1)[1].strip().strip('"')
+                display_name = line.split(":", 1)[1].strip().strip('"\'')
+                continue
             if line.startswith("description:"):
-                desc = line.split(":", 1)[1].strip().strip('"')
+                rest = line.split(":", 1)[1].strip()
+                if rest in ("|", ">"):
+                    in_desc_block = True
+                    desc_lines = []
+                elif rest:
+                    desc = rest.strip().strip('"')
+                else:
+                    in_desc_block = True
+                    desc_lines = []
+                continue
+            if in_desc_block:
+                if line.strip() == "---":
+                    break
+                if line.strip():
+                    desc_lines.append(line.strip())
+        if desc_lines:
+            desc = " ".join(desc_lines[:3])
+            if len(desc_lines) > 3:
+                desc += "…"
         results.append({
-            "name": name,
+            "display_name": display_name,
             "description": desc,
             "dir_name": sd.name,
             "path": str(skill_file),
+            "session_id": meta.get("session_id") or "",
+            "last_session_id": meta.get("last_session_id") or "",
         })
     return results
 
@@ -74,14 +109,40 @@ def run_skill_learner(
     执行 Skill Learner，返回 (touched_skills, skill_decisions)。
     """
     _trace = trace if trace is not None else []
-    system = system_prompt.strip() or SKILL_LEARNER_SYSTEM_PROMPT
+    reference_date = datetime.now().strftime("%Y-%m-%d")
+    base_system = system_prompt.strip() or SKILL_LEARNER_SYSTEM_PROMPT
+    system = (
+        f"{base_system}\n\n## 当天参考日期\n"
+        f"本机当天日期为 **{reference_date}**。技能文件中凡需写日期的条目，必须使用此日。"
+    )
 
     all_skills = scan_skills_dir(skills_dir)
-    skills_str = "\n".join(
-        f"- **{s['name']}**: {s['description']}" for s in all_skills
-    ) if all_skills else "（暂无技能）"
+    lines: list[str] = []
+    for s in all_skills:
+        dname = s["dir_name"]
+        disp = s.get("display_name") or dname
+        if disp == dname or not disp:
+            line = f"- `{dname}`（**skill_name 用此字符串**）| 简介：{s['description']}"
+        else:
+            line = (
+                f"- 目录 `{dname}` | YAML 名：**{disp}**（**skill_name 用目录名**）"
+                f" | 简介：{s['description']}"
+            )
+        sid = s.get("session_id") or ""
+        lid = s.get("last_session_id") or ""
+        if sid:
+            line += f" [来源会话: {sid}]"
+        if lid and lid != sid:
+            line += f" [最近更新会话: {lid}]"
+        lines.append(line)
+    skills_str = "\n".join(lines) if lines else "（暂无技能）"
 
-    user_input = pack_skill_learner_input(distilled_context, skills_str)
+    user_input = pack_skill_learner_input(
+        distilled_context,
+        skills_str,
+        reference_date=reference_date,
+        session_id=session_id,
+    )
     ctx = SkillLearnerToolContext(skills_dir, session_id=session_id)
 
     llm_messages: list[dict] = [{"role": "user", "content": user_input}]

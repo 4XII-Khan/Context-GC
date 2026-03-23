@@ -16,10 +16,10 @@ DISTILL_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "skip_learning",
-            "description": "Skip learning — task is trivial",
+            "description": "Skip learning — task is trivial. Use Simplified Chinese (简体中文) for reason.",
             "parameters": {
                 "type": "object",
-                "properties": {"reason": {"type": "string"}},
+                "properties": {"reason": {"type": "string", "description": "简体中文，简要说明为何跳过"}},
                 "required": ["reason"],
             },
         },
@@ -28,14 +28,14 @@ DISTILL_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "report_success_analysis",
-            "description": "Report analysis of a successful task",
+            "description": "Report analysis of a successful task. All string fields must be Simplified Chinese (简体中文).",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "task_goal": {"type": "string"},
-                    "approach": {"type": "string"},
-                    "key_decisions": {"type": "array", "items": {"type": "string"}},
-                    "generalizable_pattern": {"type": "string"},
+                    "task_goal": {"type": "string", "description": "简体中文"},
+                    "approach": {"type": "string", "description": "简体中文"},
+                    "key_decisions": {"type": "array", "items": {"type": "string", "description": "简体中文"}},
+                    "generalizable_pattern": {"type": "string", "description": "简体中文"},
                 },
                 "required": ["task_goal", "approach", "key_decisions", "generalizable_pattern"],
             },
@@ -45,12 +45,12 @@ DISTILL_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "report_factual_content",
-            "description": "Report factual content from a task",
+            "description": "Report factual content from a task. All strings Simplified Chinese (简体中文).",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "task_goal": {"type": "string"},
-                    "facts": {"type": "array", "items": {"type": "string"}},
+                    "task_goal": {"type": "string", "description": "简体中文"},
+                    "facts": {"type": "array", "items": {"type": "string", "description": "简体中文，第三人称事实陈述"}},
                 },
                 "required": ["task_goal", "facts"],
             },
@@ -60,15 +60,15 @@ DISTILL_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "report_failure_analysis",
-            "description": "Report analysis of a failed task",
+            "description": "Report analysis of a failed task. All string fields Simplified Chinese (简体中文).",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "task_goal": {"type": "string"},
-                    "failure_point": {"type": "string"},
-                    "flawed_reasoning": {"type": "string"},
-                    "what_should_have_been_done": {"type": "string"},
-                    "prevention_principle": {"type": "string"},
+                    "task_goal": {"type": "string", "description": "简体中文"},
+                    "failure_point": {"type": "string", "description": "简体中文"},
+                    "flawed_reasoning": {"type": "string", "description": "简体中文"},
+                    "what_should_have_been_done": {"type": "string", "description": "简体中文"},
+                    "prevention_principle": {"type": "string", "description": "简体中文"},
                 },
                 "required": ["task_goal", "failure_point", "flawed_reasoning",
                              "what_should_have_been_done", "prevention_principle"],

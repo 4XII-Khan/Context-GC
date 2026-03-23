@@ -4,7 +4,8 @@ distillation/flush.py
 蒸馏管道入口：Task Agent → 蒸馏 → 经验写入 + Skill Learner。
 
 宿主在 on_session_end 时调用，传入 L2 (raw_messages) 和 backend。
-LLM 调用通过 ContextGCOptions 中的回调间接注入。
+``call_llm`` 可省略：未传时依次使用 ``options.flush_call_llm``、
+``defaults.default_call_llm_with_tools``（与压缩同源 ``CONTEXT_GC_*``）。
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 from ..storage.backend import MemoryBackend, UserPreference
 from .models import TaskSchema, TaskStatus
@@ -26,19 +27,27 @@ _log = logging.getLogger(__name__)
 CallLLM = Callable[[str, list[dict], list[dict]], dict]
 
 
-def _get_messages_for_task(task: TaskSchema, all_messages: list[dict]) -> list[dict]:
-    """根据 task.raw_message_ids 提取关联的消息子集。"""
-    if not task.raw_message_ids:
-        return all_messages
-    indices: set[int] = set()
-    for mid in task.raw_message_ids:
-        try:
-            indices.add(int(mid))
-        except (ValueError, TypeError):
-            continue
-    if not indices:
-        return all_messages
-    return [m for i, m in enumerate(all_messages) if i in indices]
+def _resolve_call_llm(call_llm: CallLLM | None, options: Any) -> CallLLM | None:
+    if call_llm is not None:
+        return call_llm
+    if options is not None:
+        cb = getattr(options, "flush_call_llm", None)
+        if cb is not None:
+            return cb
+    try:
+        from ..defaults import default_call_llm_with_tools
+
+        return default_call_llm_with_tools
+    except ImportError:
+        return None
+
+
+def _session_messages_for_distillation(_task: TaskSchema, all_messages: list[dict]) -> list[dict]:
+    """
+    蒸馏使用的消息范围：按会话粒度，始终为本轮传入的完整会话消息。
+    任务仅通过 session_id 与会话绑定，不细分到消息 ID。
+    """
+    return all_messages
 
 
 async def flush_distillation(
@@ -53,18 +62,22 @@ async def flush_distillation(
     task_agent_max_iterations: int = 20,
     skill_learner_max_iterations: int = 10,
     dedup_strategy: str = "keyword_overlap",
+    experience_task_assign_mode: Literal["heuristic", "llm"] = "llm",
     trace: list[str] | None = None,
 ) -> dict:
     """
     执行完整的三阶段蒸馏管道。
 
     Args:
-        call_llm: 同步 LLM 调用回调 (system, messages, tools) -> response。
-                  若未提供，尝试从 options 构建。
-        options: ContextGCOptions（可选，用于构建默认 call_llm）。
+        call_llm: 同步 LLM 调用回调 (system, messages, tools) -> response；可省略。
+        options: ContextGCOptions（可选）；可含 ``flush_call_llm``，否则使用
+                  ``defaults.default_call_llm_with_tools``。
+        experience_task_assign_mode: 经验落库前任务归并方式，``llm`` 结合 task_index
+                  调用大模型；``heuristic`` 仅用后端模糊匹配。无 call_llm 时 ``llm`` 会自动回退。
 
     Returns:
-        {task_count, success_count, failed_count, skills_learned, experiences_written, errors, trace}
+        {task_count, success_count, failed_count, skills_learned, experiences_written,
+         preferences_written, errors, trace}
     """
     _trace = trace if trace is not None else []
     result: dict[str, Any] = {
@@ -73,6 +86,7 @@ async def flush_distillation(
         "failed_count": 0,
         "skills_learned": 0,
         "experiences_written": 0,
+        "preferences_written": 0,
         "errors": [],
     }
 
@@ -81,9 +95,9 @@ async def flush_distillation(
         result["trace"] = _trace
         return result
 
-    # 需要一个 call_llm 回调
+    call_llm = _resolve_call_llm(call_llm, options)
     if call_llm is None:
-        _trace.append("[flush] 未提供 call_llm 回调，跳过蒸馏")
+        _trace.append("[flush] 无可用 call_llm（未注入且无法加载 defaults.default_call_llm_with_tools）")
         result["trace"] = _trace
         return result
 
@@ -123,6 +137,7 @@ async def flush_distillation(
         ]
         try:
             await backend.save_user_preferences(user_id, prefs, session_id)
+            result["preferences_written"] = len(prefs)
         except Exception as e:
             _log.warning("Save preferences failed: %s", e)
 
@@ -145,7 +160,7 @@ async def flush_distillation(
     all_experiences: list[tuple[TaskSchema, Any]] = []
 
     for task in finished:
-        task_msgs = _get_messages_for_task(task, messages)
+        task_msgs = _session_messages_for_distillation(task, messages)
         try:
             outcome = process_distillation(
                 task=task,
@@ -181,6 +196,8 @@ async def flush_distillation(
                 session_id=session_id,
                 backend=backend,
                 dedup_strategy=dedup_strategy,
+                task_assign_mode=experience_task_assign_mode,
+                call_llm=call_llm,
             )
             result["experiences_written"] = written
         except Exception as e:

@@ -131,8 +131,21 @@ class MemoryBackend(Protocol):
         user_id: str,
         experiences: list[UserExperience],
         session_id: str,
+        *,
+        use_fuzzy_task_match: bool = True,
     ) -> None: ...
 
     async def load_user_experience(
-        self, user_id: str, task_desc: str | None = None
+        self,
+        user_id: str,
+        task_desc: str | None = None,
+        *,
+        use_fuzzy_task_match: bool = True,
     ) -> list[UserExperience]: ...
+
+    async def load_user_experience_task_index(self, user_id: str) -> list[dict]:
+        """
+        返回该用户经验目录下的任务索引（与 ``.task_index.json`` 结构一致）。
+        无索引实现可返回空列表。
+        """
+        ...

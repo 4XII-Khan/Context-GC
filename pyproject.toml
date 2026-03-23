@@ -47,3 +47,5 @@ packages = ["src/context_gc"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# 默认逐条打印用例进度（PASSED/FAILED/SKIP 与用例名）；完整套件勿排除任何文件时便于观察卡在哪
+addopts = "-v --tb=short"

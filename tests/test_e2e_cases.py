@@ -4,7 +4,7 @@ tests/test_e2e_cases.py
 5 个端到端集成测试 Case，覆盖 Context GC 全部核心能力链路：
   Case 1: 基础摘要 + 分代打分（5 轮）
   Case 2: 容量触发合并（10 轮，小容量上限）
-  Case 3: 偏好检测 + 持久化（5 轮，含偏好表达）
+  Case 3: 偏好仅经蒸馏写入（5 轮，无 close() 规则检测；mock 蒸馏持久化）
   Case 4: Checkpoint 崩溃恢复（8 轮，模拟中断后恢复）
   Case 5: 全链路端到端（8 轮，会话结束 → L0/L1/L2 → 新会话加载 → 跨会话检索 → 记忆注入）
 
@@ -28,8 +28,10 @@ from context_gc import (
     ContextGCOptions,
     FileBackend,
     RoundMeta,
+    UserPreference,
     build_memory_injection,
 )
+from context_gc.defaults import default_generate_l0
 
 _env_paths = [
     Path(__file__).resolve().parent.parent / ".env",
@@ -135,30 +137,6 @@ async def compute_relevance(user_text: str, summaries: list[str]) -> list[float]
     except Exception:
         scores = [5.0] * len(summaries)
     return scores
-
-
-def call_llm_with_tools(system: str, messages: list[dict], tools: list[dict]) -> dict:
-    from openai import OpenAI
-    sync_client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
-    resp = sync_client.chat.completions.create(
-        model=LLM_MODEL,
-        messages=[{"role": "system", "content": system}, *messages],
-        tools=tools if tools else None,
-        max_tokens=512,
-        extra_body={"chat_template_kwargs": {"enable_thinking": False}},
-    )
-    msg = resp.choices[0].message
-    result: dict = {"role": "assistant", "content": msg.content or ""}
-    if msg.tool_calls:
-        result["tool_calls"] = [
-            {
-                "id": tc.id,
-                "type": "function",
-                "function": {"name": tc.function.name, "arguments": tc.function.arguments},
-            }
-            for tc in msg.tool_calls
-        ]
-    return result
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -364,16 +342,19 @@ async def case2_capacity_compaction():
 
 
 # ═══════════════════════════════════════════════════════════════════
-# Case 3: 偏好检测 + 持久化
+# Case 3: 偏好仅经蒸馏（或宿主注入的 flush）写入
 # ═══════════════════════════════════════════════════════════════════
 
 async def case3_preference_detection():
-    """5 轮对话含偏好表达，验证偏好检测 + 存储 + 加载。"""
+    """5 轮对话：close() 不再做正则偏好检测；偏好由 flush_distillation 写入。"""
     case_dir = TEST_DATA_DIR / "case3"
     if case_dir.exists():
         shutil.rmtree(case_dir)
 
-    report.start_case("Case 3: 偏好检测 + 持久化", "5 轮对话含偏好表达，验证检测 → 存储 → 加载")
+    report.start_case(
+        "Case 3: 偏好仅蒸馏写入",
+        "验证无 close() 规则检测；on_session_end 注入 flush 后偏好可持久化",
+    )
     t0 = time.time()
     passed = 0
     total = 0
@@ -410,41 +391,70 @@ async def case3_preference_detection():
     detected = getattr(gc, "_detected_preferences", [])
     total += 1
     passed += report.check(
-        "检测到偏好信号（>= 2 条）",
-        len(detected) >= 2,
-        f"检测到 {len(detected)} 条偏好",
+        "close() 不再累积规则检测偏好",
+        len(detected) == 0,
+        f"_detected_preferences 条数={len(detected)}（应为 0）",
     )
 
-    for p in detected:
-        report.log(f"  偏好: [{p.category}] {p.l0}")
+    async def mock_flush_distillation(
+        session_id: str,
+        user_id: str,
+        messages: list,
+        backend,
+        **_kwargs,
+    ):
+        """模拟蒸馏管道写入一条偏好（真实场景由 Task Agent / 蒸馏产出）。"""
+        await backend.save_user_preferences(
+            user_id,
+            [
+                UserPreference(
+                    user_id=user_id,
+                    category="explicit_prefs",
+                    l0="用户希望后续对话使用中文回复（蒸馏管道写入）",
+                    source_session=session_id,
+                ),
+            ],
+            session_id,
+        )
+        return {
+            "task_count": 0,
+            "success_count": 0,
+            "failed_count": 0,
+            "skills_learned": 0,
+            "experiences_written": 0,
+            "preferences_written": 1,
+            "errors": [],
+        }
 
-    result = await gc.on_session_end(user_id="test_user_001")
+    result = await gc.on_session_end(
+        user_id="test_user_001",
+        flush_distillation=mock_flush_distillation,
+    )
     total += 1
     passed += report.check(
-        "on_session_end 返回偏好计数",
-        result.get("detected_preferences", 0) >= 2,
+        "on_session_end 规则检测偏好计数恒为 0（兼容字段）",
+        result.get("detected_preferences", -1) == 0,
         f"detected_preferences={result.get('detected_preferences', 0)}",
+    )
+
+    dist = result.get("distillation") or {}
+    total += 1
+    passed += report.check(
+        "蒸馏结果含 preferences_written",
+        dist.get("preferences_written", 0) >= 1,
+        f"preferences_written={dist.get('preferences_written', 0)}",
     )
 
     loaded_prefs = await backend.load_user_preferences("test_user_001")
     total += 1
     passed += report.check(
-        "偏好已持久化到文件并可加载",
-        len(loaded_prefs) >= 2,
+        "经 flush 写入的偏好已持久化并可加载",
+        len(loaded_prefs) >= 1,
         f"加载到 {len(loaded_prefs)} 条偏好",
     )
 
     for lp in loaded_prefs:
         report.log(f"  持久化偏好: [{lp.category}] {lp.l0} (session={lp.source_session})")
-
-    total += 1
-    categories = {p.category for p in loaded_prefs}
-    has_diverse_categories = len(categories) >= 2
-    passed += report.check(
-        "偏好涵盖多种类别",
-        has_diverse_categories,
-        f"类别: {categories}",
-    )
 
     report.end_case(time.time() - t0, passed, total)
     return passed, total
@@ -601,6 +611,7 @@ async def case5_full_lifecycle():
             merge_summary=merge_summary,
             compute_relevance=compute_relevance,
             estimate_tokens=estimate_tokens,
+            generate_l0=default_generate_l0,
             data_dir=str(case_dir),
             checkpoint_interval=3,
             scoring_interval=3,
@@ -623,21 +634,9 @@ async def case5_full_lifecycle():
     )
 
     report.log("─── 阶段 2: on_session_end ───")
-    async def generate_l0(session_id, l1):
-        combined = "; ".join(l1[:5])
-        resp = await _client.chat.completions.create(
-            model=LLM_MODEL,
-            messages=[
-                {"role": "user", "content": f"用一句话（不超过100字）总结以下会话摘要：\n{combined}"},
-            ],
-            max_tokens=100,
-            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
-        )
-        return (resp.choices[0].message.content or "").strip()
-
     end_result = await gc1.on_session_end(
         user_id="blogger_001",
-        generate_l0=generate_l0,
+        generate_l0=default_generate_l0,
     )
 
     total += 1
@@ -658,10 +657,10 @@ async def case5_full_lifecycle():
     passed += report.check("L2 原始对话已持久化", l2_exists, f"L2 path={l2_uri}")
 
     total += 1
-    pref_count = end_result.get("detected_preferences", 0)
+    pref_count = end_result.get("detected_preferences", -1)
     passed += report.check(
-        "会话中检测到偏好",
-        pref_count >= 2,
+        "不再通过 close() 规则检测写入偏好（detected_preferences==0）",
+        pref_count == 0,
         f"detected_preferences={pref_count}",
     )
 
@@ -831,6 +830,7 @@ async def case6_distillation_pipeline():
             merge_summary=merge_summary,
             compute_relevance=compute_relevance,
             estimate_tokens=estimate_tokens,
+            generate_l0=default_generate_l0,
             data_dir=str(case_dir),
             checkpoint_interval=5,
             scoring_interval=3,
@@ -946,18 +946,17 @@ async def case6_distillation_pipeline():
 
 
 async def _run_distillation(session_id, user_id, messages, backend, **kwargs):
-    """蒸馏管道的调用封装。"""
+    """蒸馏管道的调用封装（``call_llm`` 由 ``flush_distillation`` 从 ``options`` / defaults 解析）。"""
     from context_gc.distillation.flush import flush_distillation
     trace: list[str] = []
-    result = await flush_distillation(
+    return await flush_distillation(
         session_id=session_id,
         user_id=user_id,
         messages=messages,
         backend=backend,
-        call_llm=call_llm_with_tools,
         trace=trace,
+        **{k: v for k, v in kwargs.items() if k != "trace"},
     )
-    return result
 
 
 # ═══════════════════════════════════════════════════════════════════

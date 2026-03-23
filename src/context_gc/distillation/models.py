@@ -36,20 +36,17 @@ class TaskSchema:
     data: TaskData = field(default_factory=TaskData)
     raw_message_ids: list[str] = field(default_factory=list)
     planning_content: str = ""
+    # raw_message_ids：遗留字段；蒸馏按会话粒度使用全会话消息，不再依赖此列表。
 
     def to_string(self) -> str:
         lines = [
             f"任务 #{self.order}: {self.data.task_description}",
-            f"状态: {self.status}",
+            f"状态: {self.status}（会话: {self.session_id or '当前'}）",
         ]
         if self.data.progresses:
             lines.append("进度:")
             for p in self.data.progresses:
                 lines.append(f"  - {p}")
-        if self.raw_message_ids:
-            lines.append(f"关联消息: {', '.join(self.raw_message_ids[:5])}")
-            if len(self.raw_message_ids) > 5:
-                lines.append(f"  ... 共 {len(self.raw_message_ids)} 条")
         return "\n".join(lines)
 
 

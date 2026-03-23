@@ -11,7 +11,7 @@
 
 **Context GC**（Context Garbage Collection）：在有限上下文窗口内，通过增量摘要、分代标注与容量阈值触发的合并摘要，实现长对话的可持续压缩与上下文管理。
 
-注入 `MemoryBackend` 时，Context GC 还负责**会话存储**（L0/L1/L2 分层持久化与检索）、**偏好存储**（用户偏好）、**经验存储**（技能经验），详见 [记忆系统设计](./记忆系统设计.md)。
+注入 `MemoryBackend` 时，Context GC 还负责**会话存储**（L0/L1/L2 分层持久化与检索）、**偏好存储**（用户偏好）、**经验存储**（技能经验），详见 [记忆系统设计](./memory-system.md)。
 
 ### 1.1 两条摘要流水线
 
@@ -397,17 +397,39 @@ class ContextGCOptions:
     max_input_tokens: int
     capacity_threshold: float = 0.1      # 10% 步长，超过 20% 后每 10% 触发
     reserve_for_output: int = 4096
-    merge_gradient_by_tokens: list[tuple[int, float|int]] | None = None  # 压缩梯度，默认见实现
+    merge_gradient_by_tokens: list[tuple[int, float|int]] | None = None  # 压缩梯度；长上下文预设用 LONG_CONTEXT_MERGE_GRADIENT_BY_TOKENS
     generate_summary: Callable[..., Awaitable[str]]   # (messages, *, max_output_chars) -> str
     merge_summary: Callable[..., Awaitable[str]]      # (group, *, max_output_chars) -> str
     compute_relevance: Callable[[str, list[str]], Awaitable[list[float]]]
     estimate_tokens: Callable[[object], int]
+    # 持久化 / 蒸馏（与 memory-system.md 第八章、../configuration.md 对齐）
+    data_dir: str = ""
+    checkpoint_interval: int = 5
+    checkpoint_raw_messages: bool = True
+    generate_l0: Callable[..., Awaitable[str]] | None = None
+    flush_call_llm: Callable[..., dict] | None = None
+    flush_min_messages: int = 4
+    flush_task_agent_max_iterations: int = 20
+    flush_skill_learner_max_iterations: int = 10
+    flush_experience_task_assign_mode: str = "llm"   # "heuristic" | "llm"
+    flush_dedup_strategy: str = "keyword_overlap"
+    flush_distillation_trace: bool = False
+
+    @classmethod
+    def with_env_defaults(cls, **kwargs) -> "ContextGCOptions": ...
+    @classmethod
+    def preset_small_chat(cls, **kwargs) -> "ContextGCOptions": ...
+    @classmethod
+    def preset_agent_long_context(cls, **kwargs) -> "ContextGCOptions": ...
 
 class ContextGC:
-    def __init__(self, options: ContextGCOptions):
+    def __init__(self, options: ContextGCOptions, *, session_id: str = "", backend=None, persist_l2: bool = True):
         self.options = options
         self.state = ContextGCState(...)
         self._buffer: list[dict] = []  # 当前轮缓冲
+
+    @classmethod
+    def create_with_file_backend(cls, data_dir, *, session_id: str = "", options=None, persist_l2: bool = True, **kw): ...
 
     def push(self, message: dict | list[dict]) -> None:
         """宿主推送消息，可单条或批量。"""
@@ -466,7 +488,10 @@ context_gc:
   capacity_threshold: 0.1    # 10% 步长，20%/30%/40%… 触发
   reserve_for_output: 4096
   # generate_summary, merge_summary, compute_relevance, estimate_tokens 由实现方注入
+  # 或使用 ContextGCOptions.with_env_defaults() 绑定默认 OpenAI 兼容客户端
 ```
+
+**开箱与环境变量、蒸馏字段、预设**的完整列表见 [配置说明](../configuration.md)；记忆持久化与 `on_session_end` 见 [记忆系统设计](./memory-system.md)。
 
 ### 7.2 摘要大模型（OpenRouter 兼容）
 
@@ -477,6 +502,8 @@ context_gc:
 | `CONTEXT_GC_BASE_URL` | API 基址（OpenRouter 兼容） | `https://mgallery.haier.net/v1` |
 | `CONTEXT_GC_API_KEY` | API Key | 从 `.env` 读取（复制 `.env.example` 配置），**禁止硬编码** |
 | `CONTEXT_GC_MODEL` | 模型名 | `Qwen3.5-35B-A3B` |
+| `CONTEXT_GC_DISABLE_THINKING` | 部分网关需显式关闭 thinking，避免 content 为空 | `1` |
+| `CONTEXT_GC_FLUSH_*` | 蒸馏与会话结束行为 | 见 [配置说明](../configuration.md) |
 
 **实现示例**（Python，使用 `openai` 兼容客户端）：
 
@@ -536,6 +563,6 @@ async def merge_summary(group: list, *, max_output_chars: int | None = None) -> 
 | 新增 | `src/context_gc/state.py` | RoundMeta, ContextGCState |
 | 新增 | `src/context_gc/generational.py` | 分代打分、关联度计算 |
 | 新增 | `src/context_gc/compaction.py` | 容量阈值、相邻合并、压缩梯度 |
-| 新增 | `src/context_gc/context_gc.py` | ContextGC 主类 |
+| 新增 | `src/context_gc/core.py` | ContextGC 主类、`ContextGCOptions` |
 | 实现方 | `generate_summary` / `merge_summary` 等回调 | 遵循 2.5 摘要格式与准则；宿主仅负责 push/close/get_messages |
 
